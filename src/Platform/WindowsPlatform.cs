@@ -49,20 +49,34 @@ public class WindowsPlatform : IPlatform
             var result = await RunCommandAsync("icacls", $"\"{path}\"");
             var currentUser = Environment.UserName;
 
-            // Check that only the current user has access (for private keys)
-            if (kind == SshFileKind.PrivateKey)
+            // On Windows, SSH requires that private keys are not accessible by
+            // other regular users. SYSTEM, Administrators, and the current user
+            // having access is acceptable and normal.
+            if (kind == SshFileKind.PrivateKey || kind == SshFileKind.AuthorizedKeys)
             {
                 var lines = result.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                // Should only have the current user and the path line
                 foreach (var line in lines)
                 {
                     var trimmed = line.Trim();
-                    if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith(path, StringComparison.OrdinalIgnoreCase))
+                    if (string.IsNullOrEmpty(trimmed))
+                        continue;
+                    if (trimmed.StartsWith(path, StringComparison.OrdinalIgnoreCase))
                         continue;
                     if (trimmed.Contains("Successfully processed", StringComparison.OrdinalIgnoreCase))
                         continue;
-                    if (!trimmed.Contains(currentUser, StringComparison.OrdinalIgnoreCase))
-                        return false;
+
+                    // These are all acceptable ACL entries on Windows
+                    if (trimmed.Contains(currentUser, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (trimmed.Contains("SYSTEM", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (trimmed.Contains("BUILTIN\\Administrators", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (trimmed.Contains("NT AUTHORITY\\SYSTEM", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    // Any other user/group = too open
+                    return false;
                 }
             }
 
