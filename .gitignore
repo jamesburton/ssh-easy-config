@@ -3,3 +3,7 @@
 # .NET build outputs
 bin/
 obj/
+*.nupkg
+.vs/
+*.user
+artifacts/
