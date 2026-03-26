@@ -104,17 +104,19 @@ public static class ReceiveCommand
 
                     if (services.Count > 0)
                     {
-                        // Build display choices with IP fallback info
-                        // Use parentheses instead of brackets to avoid Spectre markup parsing
-                        var choices = new List<string>();
-                        for (int i = 0; i < services.Count; i++)
-                        {
-                            var s = services[i];
-                            var addrInfo = s.Addresses.Count > 0
-                                ? $" ({string.Join(", ", s.Addresses)})"
-                                : "";
-                            choices.Add($"{s.HostName}:{s.Port}{addrInfo}");
-                        }
+                        // Deduplicate by instance name + port, merge addresses
+                        var merged = services
+                            .GroupBy(s => $"{s.InstanceName}:{s.Port}")
+                            .Select(g =>
+                            {
+                                var first = g.First();
+                                var allAddrs = g.SelectMany(s => s.Addresses).Distinct().ToList();
+                                return first with { Addresses = allAddrs };
+                            })
+                            .ToList();
+
+                        // Show clean selection: just hostname:port (instance name)
+                        var choices = merged.Select(s => $"{s.HostName}:{s.Port} ({s.InstanceName})").ToList();
                         choices.Add("Enter manually");
 
                         var selection = AnsiConsole.Prompt(
@@ -129,20 +131,36 @@ public static class ReceiveCommand
                         else
                         {
                             var idx = choices.IndexOf(selection);
-                            var service = services[idx];
+                            var service = merged[idx];
                             port = service.Port;
 
                             if (host is not null)
                             {
-                                // User specified --host, just grab the port from mDNS
                                 connectHost = host;
+                            }
+                            else if (service.Addresses.Count > 1)
+                            {
+                                // Multiple IPs — let user pick (filter out virtual adapter ranges)
+                                var addrChoices = service.Addresses
+                                    .OrderBy(a => IsLikelyVirtualAddress(a) ? 1 : 0)
+                                    .ToList();
+                                addrChoices.Add(service.HostName + " (hostname)");
+
+                                connectHost = AnsiConsole.Prompt(
+                                    new SelectionPrompt<string>()
+                                        .Title("Multiple addresses found. Which to connect to?")
+                                        .AddChoices(addrChoices));
+
+                                if (connectHost.EndsWith(" (hostname)"))
+                                    connectHost = service.HostName;
+                            }
+                            else if (service.Addresses.Count == 1)
+                            {
+                                connectHost = service.Addresses[0];
                             }
                             else
                             {
-                                // Prefer IP address over hostname for reliable connection
-                                connectHost = service.Addresses.Count > 0
-                                    ? service.Addresses[0]
-                                    : service.HostName;
+                                connectHost = service.HostName;
                             }
                         }
                     }
@@ -203,6 +221,17 @@ public static class ReceiveCommand
 
         await ShareCommand.PromptToAddKeyAndAlias(platform, remoteBundle);
         return 0;
+    }
+
+    /// <summary>
+    /// Heuristic: addresses in these ranges are likely virtual adapters (WSL, Hyper-V, Docker).
+    /// </summary>
+    private static bool IsLikelyVirtualAddress(string addr)
+    {
+        return addr.StartsWith("172.") && int.TryParse(addr.Split('.')[1], out var second) && second >= 16 && second <= 31
+            || addr.StartsWith("169.254.")
+            || addr.StartsWith("fe80:")
+            || addr.StartsWith("fd");
     }
 
     private static (string host, int port) PromptForHostPort()
