@@ -1,1 +1,5 @@
 **/*.local.*
+
+# .NET build outputs
+bin/
+obj/
