@@ -26,37 +26,39 @@ public static class WindowsAccountHelper
 
     /// <summary>
     /// Checks whether the current Windows user account is linked to a Microsoft account.
-    /// Examines WindowsIdentity claims for "MicrosoftAccount" and falls back to checking
-    /// the registry ProfileList for a Guid value.
+    /// Uses PowerShell Get-LocalUser which reliably reports PrincipalSource.
     /// </summary>
     [SupportedOSPlatform("windows")]
     public static bool IsMicrosoftLinkedAccount()
     {
         try
         {
-            var identity = WindowsIdentity.GetCurrent();
+            // Most reliable method: Get-LocalUser reports PrincipalSource
+            using var process = new System.Diagnostics.Process();
+            process.StartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "powershell",
+                Arguments = $"-NoProfile -Command \"(Get-LocalUser '{Environment.UserName}').PrincipalSource\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            process.Start();
+            var output = process.StandardOutput.ReadToEnd().Trim();
+            process.WaitForExit(5000);
 
-            // Check claims for Microsoft account indicator
+            if (output.Equals("MicrosoftAccount", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // Fallback: check WindowsIdentity claims
+            var identity = WindowsIdentity.GetCurrent();
             foreach (var claim in identity.Claims)
             {
                 if (claim.Value.Contains("MicrosoftAccount", StringComparison.OrdinalIgnoreCase))
                     return true;
                 if (claim.Issuer?.Contains("MicrosoftAccount", StringComparison.OrdinalIgnoreCase) == true)
                     return true;
-            }
-
-            // Check registry for profile GUID (indicates MS-linked account)
-            var sid = identity.User?.Value;
-            if (sid != null)
-            {
-                using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                    $@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{sid}");
-                if (key != null)
-                {
-                    var guidValue = key.GetValue("Guid");
-                    if (guidValue != null)
-                        return true;
-                }
             }
 
             return false;
