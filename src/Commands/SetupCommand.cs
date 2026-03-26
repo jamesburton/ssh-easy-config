@@ -12,30 +12,53 @@ public static class SetupCommand
     /// Uses cmd /k to keep the window open so the user can see output.
     /// Returns true if relaunch was initiated (caller should exit).
     /// </summary>
-    private static bool TryRelaunchElevated()
+    private static bool TryRelaunchElevated(bool verbose = false)
     {
         if (!OperatingSystem.IsWindows())
             return false;
 
         try
         {
-            // Relaunch the exact same process with the same arguments, elevated.
-            var exePath = Environment.ProcessPath;
-            var args = string.Join(" ", Environment.GetCommandLineArgs().Skip(1));
+            // Reconstruct the full command line.
+            // For .NET tools, Environment.ProcessPath is "dotnet.exe" and
+            // GetCommandLineArgs() is ["path/to/ssh-easy-config.dll", "setup"].
+            // We need to pass ALL of GetCommandLineArgs() to dotnet.
+            var processPath = Environment.ProcessPath;
+            var cmdLineArgs = Environment.GetCommandLineArgs();
+
+            if (verbose)
+            {
+                AnsiConsole.MarkupLine($"[grey]ProcessPath: {Markup.Escape(processPath ?? "(null)")}[/]");
+                for (int i = 0; i < cmdLineArgs.Length; i++)
+                    AnsiConsole.MarkupLine($"[grey]Arg[{i}]: {Markup.Escape(cmdLineArgs[i])}[/]");
+            }
+
+            // Build the command: "{processPath}" arg0 arg1 arg2 ...
+            // arg0 is typically the DLL/exe path, arg1+ are the actual arguments
+            var quotedArgs = string.Join(" ",
+                cmdLineArgs.Select(a => a.Contains(' ') ? $"\"{a}\"" : a));
+            var fullCommand = $"\"{processPath}\" {quotedArgs}";
+
+            if (verbose)
+            {
+                AnsiConsole.MarkupLine($"[grey]Full command: {Markup.Escape(fullCommand)}[/]");
+                AnsiConsole.MarkupLine($"[grey]Will run: cmd.exe /k {Markup.Escape(fullCommand)}[/]");
+            }
 
             var psi = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
-                Arguments = $"/k \"{exePath}\" {args}",
+                Arguments = $"/k {fullCommand}",
                 UseShellExecute = true,
                 Verb = "runas" // triggers UAC prompt
             };
             Process.Start(psi);
             return true;
         }
-        catch
+        catch (Exception ex)
         {
-            // User declined UAC or other failure
+            if (verbose)
+                AnsiConsole.MarkupLine($"[red]Relaunch failed: {Markup.Escape(ex.Message)}[/]");
             return false;
         }
     }
@@ -43,7 +66,7 @@ public static class SetupCommand
     /// <summary>
     /// Prompts user to restart as Administrator. Returns true if relaunched.
     /// </summary>
-    private static bool PromptAndRelaunchElevated()
+    private static bool PromptAndRelaunchElevated(bool verbose = false)
     {
         var relaunch = AnsiConsole.Prompt(
             new ConfirmationPrompt("Restart as Administrator?") { DefaultValue = true });
@@ -55,7 +78,7 @@ public static class SetupCommand
         }
 
         AnsiConsole.MarkupLine("[grey]Launching elevated process...[/]");
-        if (TryRelaunchElevated())
+        if (TryRelaunchElevated(verbose))
         {
             AnsiConsole.MarkupLine("[green]Elevated process started. This window can be closed.[/]");
             return true;
@@ -65,7 +88,7 @@ public static class SetupCommand
         return false;
     }
 
-    public static async Task<int> RunAsync(IPlatform platform)
+    public static async Task<int> RunAsync(IPlatform platform, bool verbose = false)
     {
         AnsiConsole.Write(new Rule("[bold blue]SSH Easy Config - Setup Wizard[/]").LeftJustified());
         AnsiConsole.WriteLine();
@@ -74,7 +97,7 @@ public static class SetupCommand
         if (platform.Kind == PlatformKind.Windows && !platform.IsElevated)
         {
             AnsiConsole.MarkupLine("[yellow]Some setup steps require Administrator privileges (installing SSH server, configuring firewall, modifying sshd_config).[/]");
-            if (PromptAndRelaunchElevated())
+            if (PromptAndRelaunchElevated(verbose))
                 return 0;
         }
 
@@ -126,7 +149,7 @@ public static class SetupCommand
             if (platform.Kind == PlatformKind.Windows && !platform.IsElevated)
             {
                 AnsiConsole.MarkupLine("[red]Administrator privileges are required to install OpenSSH Server on Windows.[/]");
-                if (PromptAndRelaunchElevated())
+                if (PromptAndRelaunchElevated(verbose))
                     return 0; // Relaunched — exit this instance
                 return 1;
             }
@@ -154,7 +177,7 @@ public static class SetupCommand
                 catch (Exception ex) when (NeedsElevation(ex))
                 {
                     AnsiConsole.MarkupLine("[red]Installation failed — elevation required.[/]");
-                    if (PromptAndRelaunchElevated())
+                    if (PromptAndRelaunchElevated(verbose))
                         return 0;
                 }
             }
@@ -201,7 +224,7 @@ public static class SetupCommand
                     catch (Exception ex) when (NeedsElevation(ex))
                     {
                         AnsiConsole.MarkupLine("[red]Starting service failed — elevation required.[/]");
-                        if (PromptAndRelaunchElevated())
+                        if (PromptAndRelaunchElevated(verbose))
                             return 0;
                     }
                 }
@@ -236,7 +259,7 @@ public static class SetupCommand
                     catch (Exception ex) when (NeedsElevation(ex))
                     {
                         AnsiConsole.MarkupLine("[red]Enabling service failed — elevation required.[/]");
-                        if (PromptAndRelaunchElevated())
+                        if (PromptAndRelaunchElevated(verbose))
                             return 0;
                     }
                 }
@@ -275,7 +298,7 @@ public static class SetupCommand
                 catch (Exception ex) when (NeedsElevation(ex))
                 {
                     AnsiConsole.MarkupLine("[red]Firewall configuration failed — elevation required.[/]");
-                    if (PromptAndRelaunchElevated())
+                    if (PromptAndRelaunchElevated(verbose))
                         return 0;
                 }
             }

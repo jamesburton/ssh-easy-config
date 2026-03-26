@@ -6,9 +6,11 @@ using SshEasyConfig.Platform;
 var platform = PlatformDetector.Detect();
 var rootCommand = new RootCommand("ssh-easy-config - Cross-platform SSH key management, sharing, and diagnostics");
 
-// setup
+// setup — options: --verbose
 var setupCommand = new Command("setup", "Generate SSH keys and configure SSH");
-setupCommand.SetAction(async (_, _) => await SetupCommand.RunAsync(platform));
+var setupVerboseOption = new Option<bool>("--verbose") { Description = "Show diagnostic details during setup" };
+setupCommand.Options.Add(setupVerboseOption);
+setupCommand.SetAction(async (pr, _) => await SetupCommand.RunAsync(platform, pr.GetValue(setupVerboseOption)));
 rootCommand.Subcommands.Add(setupCommand);
 
 // share — options: --mode (network|clipboard|file), --output, --host
