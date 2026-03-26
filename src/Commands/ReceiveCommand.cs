@@ -105,12 +105,13 @@ public static class ReceiveCommand
                     if (services.Count > 0)
                     {
                         // Build display choices with IP fallback info
+                        // Use parentheses instead of brackets to avoid Spectre markup parsing
                         var choices = new List<string>();
                         for (int i = 0; i < services.Count; i++)
                         {
                             var s = services[i];
                             var addrInfo = s.Addresses.Count > 0
-                                ? $" [{string.Join(", ", s.Addresses)}]"
+                                ? $" ({string.Join(", ", s.Addresses)})"
                                 : "";
                             choices.Add($"{s.HostName}:{s.Port}{addrInfo}");
                         }
