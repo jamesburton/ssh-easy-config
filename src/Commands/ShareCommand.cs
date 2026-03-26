@@ -163,23 +163,24 @@ public static class ShareCommand
         }
 
         // Always show what was detected
+        AnsiConsole.MarkupLine($"[grey]Detected {options.Count} option(s):[/]");
         foreach (var (addr, label) in options)
-            AnsiConsole.MarkupLine($"  [grey]Found:[/] {Markup.Escape(addr)} [dim]({Markup.Escape(label)})[/]");
+            AnsiConsole.MarkupLine($"  [grey]-[/] {Markup.Escape(addr)} [dim]({Markup.Escape(label)})[/]");
         AnsiConsole.WriteLine();
 
-        if (options.Count == 1)
-        {
-            AnsiConsole.MarkupLine($"[grey]Using:[/] {Markup.Escape(options[0].Address)}");
-            return options[0].Address;
-        }
-
-        // Format as "address (label)" for display, map back to address
+        // Always prompt — even with one option, let user confirm or type a custom value
         var displayChoices = options.Select(o => $"{o.Address} ({o.Label})").ToList();
+        displayChoices.Add("Enter custom hostname/IP");
 
         var selection = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
                 .Title("Which hostname/IP should the other machine use to connect?")
                 .AddChoices(displayChoices));
+
+        if (selection == "Enter custom hostname/IP")
+        {
+            return AnsiConsole.Prompt(new TextPrompt<string>("Enter hostname/IP:"));
+        }
 
         var idx = displayChoices.IndexOf(selection);
         return options[idx].Address;
