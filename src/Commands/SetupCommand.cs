@@ -19,16 +19,20 @@ public static class SetupCommand
 
         try
         {
-            // Reconstruct the command line for the elevated process.
-            // For .NET tools installed globally, the tool name is on PATH.
-            // For local dev, use dotnet run. We use cmd /k to keep the window open.
-            var toolCommand = "ssh-easy-config setup";
-
-            // Check if we're running as a global tool (exe exists on PATH)
+            // Reconstruct the exact command that launched us.
+            // Environment.ProcessPath gives the actual exe/dll being run.
             var exePath = Environment.ProcessPath;
-            if (exePath is not null && exePath.EndsWith("ssh-easy-config.exe", StringComparison.OrdinalIgnoreCase))
+            string toolCommand;
+
+            if (exePath is not null && File.Exists(exePath))
             {
+                // Running as a .NET tool or direct exe — relaunch the same binary
                 toolCommand = $"\"{exePath}\" setup";
+            }
+            else
+            {
+                // Fallback: use dnx which works without global install
+                toolCommand = "dnx ssh-easy-config setup";
             }
 
             var psi = new ProcessStartInfo
