@@ -7,4 +7,5 @@ public record DiagnosticResult(
     CheckStatus Status,
     string Message,
     string? FixSuggestion = null,
-    bool AutoFixAvailable = false);
+    bool AutoFixAvailable = false,
+    Func<Task>? FixAction = null);
