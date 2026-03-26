@@ -6,7 +6,7 @@ namespace SshEasyConfig.Commands;
 
 public static class ReceiveCommand
 {
-    public static async Task<int> RunAsync(IPlatform platform, string mode, string? input)
+    public static async Task<int> RunAsync(IPlatform platform, string mode, string? input, string? host = null)
     {
         const string keyName = "id_ed25519";
 
@@ -81,42 +81,90 @@ public static class ReceiveCommand
                 AnsiConsole.Write(new Rule("[bold blue]Network Key Receive[/]").LeftJustified());
                 AnsiConsole.WriteLine();
 
-                // Browse for mDNS services
-                string host;
+                string connectHost;
                 int port;
 
-                AnsiConsole.MarkupLine("[grey]Searching for nearby ssh-easy-config instances...[/]");
-                var services = await Discovery.BrowseAsync(TimeSpan.FromSeconds(3));
-
-                if (services.Count > 0)
+                if (host is not null)
                 {
-                    var choices = services.Select(s => $"{s.HostName}:{s.Port} ({s.InstanceName})").ToList();
-                    choices.Add("Enter manually");
-
-                    var selection = AnsiConsole.Prompt(
-                        new SelectionPrompt<string>()
-                            .Title("Select a host:")
-                            .AddChoices(choices));
-
-                    if (selection == "Enter manually")
-                    {
-                        (host, port) = PromptForHostPort();
-                    }
-                    else
-                    {
-                        var idx = choices.IndexOf(selection);
-                        host = services[idx].HostName;
-                        port = services[idx].Port;
-                    }
+                    // --host was provided, use it directly
+                    connectHost = host;
+                    port = 0; // will need to get from mDNS or prompt
                 }
                 else
                 {
-                    AnsiConsole.MarkupLine("[yellow]No instances found via mDNS.[/]");
-                    (host, port) = PromptForHostPort();
+                    connectHost = null!;
+                    port = 0;
+                }
+
+                // If no --host or we need a port, try mDNS
+                if (host is null || port == 0)
+                {
+                    AnsiConsole.MarkupLine("[grey]Searching for nearby ssh-easy-config instances...[/]");
+                    var services = await Discovery.BrowseAsync(TimeSpan.FromSeconds(3));
+
+                    if (services.Count > 0)
+                    {
+                        // Build display choices with IP fallback info
+                        var choices = new List<string>();
+                        for (int i = 0; i < services.Count; i++)
+                        {
+                            var s = services[i];
+                            var addrInfo = s.Addresses.Count > 0
+                                ? $" [{string.Join(", ", s.Addresses)}]"
+                                : "";
+                            choices.Add($"{s.HostName}:{s.Port}{addrInfo}");
+                        }
+                        choices.Add("Enter manually");
+
+                        var selection = AnsiConsole.Prompt(
+                            new SelectionPrompt<string>()
+                                .Title("Select a host:")
+                                .AddChoices(choices));
+
+                        if (selection == "Enter manually")
+                        {
+                            (connectHost, port) = PromptForHostPort();
+                        }
+                        else
+                        {
+                            var idx = choices.IndexOf(selection);
+                            var service = services[idx];
+                            port = service.Port;
+
+                            if (host is not null)
+                            {
+                                // User specified --host, just grab the port from mDNS
+                                connectHost = host;
+                            }
+                            else
+                            {
+                                // Prefer IP address over hostname for reliable connection
+                                connectHost = service.Addresses.Count > 0
+                                    ? service.Addresses[0]
+                                    : service.HostName;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine("[yellow]No instances found via mDNS.[/]");
+                        if (host is not null)
+                        {
+                            connectHost = host;
+                            port = AnsiConsole.Prompt(
+                                new TextPrompt<int>("Enter port:").DefaultValue(12345));
+                        }
+                        else
+                        {
+                            (connectHost, port) = PromptForHostPort();
+                        }
+                    }
                 }
 
                 var pairingCode = AnsiConsole.Prompt(
                     new TextPrompt<string>("Enter pairing code:"));
+
+                AnsiConsole.MarkupLine($"[grey]Connecting to {Markup.Escape(connectHost)}:{port}...[/]");
 
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
@@ -124,7 +172,7 @@ public static class ReceiveCommand
                 {
                     var exchange = new NetworkExchange();
                     remoteBundle = await exchange.ConnectAndExchangeAsync(
-                        host, port, localBundle, pairingCode, cts.Token);
+                        connectHost, port, localBundle, pairingCode, cts.Token);
                 }
                 catch (OperationCanceledException)
                 {

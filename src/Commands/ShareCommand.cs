@@ -7,7 +7,7 @@ namespace SshEasyConfig.Commands;
 
 public static class ShareCommand
 {
-    public static async Task<int> RunAsync(IPlatform platform, string mode, string? output)
+    public static async Task<int> RunAsync(IPlatform platform, string mode, string? output, string? host = null)
     {
         const string keyName = "id_ed25519";
 
@@ -18,11 +18,15 @@ public static class ShareCommand
         }
 
         var publicKey = await KeyManager.ReadPublicKeyAsync(platform, keyName);
+
+        // Determine the hostname to advertise
+        var advertiseHost = host ?? ResolveAdvertiseHost();
+
         var bundle = new KeyBundle(
             publicKey.Trim(),
-            Environment.MachineName,
+            advertiseHost,
             Environment.UserName,
-            Environment.MachineName.ToLowerInvariant());
+            advertiseHost.ToLowerInvariant().Split('.')[0]);
 
         switch (mode.ToLowerInvariant())
         {
@@ -46,26 +50,26 @@ public static class ShareCommand
             default: // network
             {
                 var pairingCode = PairingProtocol.GeneratePairingCode();
-                var exchange = new NetworkExchange();
 
                 AnsiConsole.Write(new Rule("[bold blue]Network Key Share[/]").LeftJustified());
                 AnsiConsole.WriteLine();
 
-                using var cts = new CancellationTokenSource();
+                // Bind to all interfaces and get assigned port
+                var exchange = new NetworkExchange(0);
+                var listenPort = 0;
 
+                using var cts = new CancellationTokenSource();
                 KeyBundle? remoteBundle = null;
-                int listenPort = 0;
 
                 var listenTask = Task.Run(async () =>
                 {
-                    // Use a temporary listener to get the actual port
-                    var tempListener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+                    // Get a port by briefly binding
+                    var tempListener = new System.Net.Sockets.TcpListener(IPAddress.Any, 0);
                     tempListener.Start();
                     listenPort = ((IPEndPoint)tempListener.LocalEndpoint).Port;
                     tempListener.Stop();
 
                     var ex = new NetworkExchange(listenPort);
-
                     remoteBundle = await ex.ListenAndExchangeAsync(
                         bundle,
                         pairingCode,
@@ -73,11 +77,18 @@ public static class ShareCommand
                         cts.Token);
                 });
 
-                // Wait briefly for the port to be assigned
+                // Wait for port assignment
                 await Task.Delay(200);
 
                 AnsiConsole.MarkupLine($"[bold]Pairing code:[/] [yellow]{pairingCode}[/]");
+                AnsiConsole.MarkupLine($"[bold]Hostname:[/] {Markup.Escape(advertiseHost)}");
                 AnsiConsole.MarkupLine($"[bold]Port:[/] {listenPort}");
+
+                // Show local IPs for manual connection
+                var localAddrs = Discovery.GetLocalAddresses();
+                if (localAddrs.Count > 0)
+                    AnsiConsole.MarkupLine($"[bold]Local IPs:[/] {string.Join(", ", localAddrs)}");
+
                 AnsiConsole.MarkupLine("[grey]Share the pairing code with the receiving machine.[/]");
 
                 // Advertise via mDNS
@@ -86,7 +97,7 @@ public static class ShareCommand
                 {
                     if (listenPort > 0)
                     {
-                        var profile = Discovery.CreateServiceProfile(Environment.MachineName, listenPort);
+                        var profile = Discovery.CreateServiceProfile(advertiseHost, listenPort);
                         advertisement = await Discovery.AdvertiseAsync(profile);
                     }
                 }
@@ -121,6 +132,26 @@ public static class ShareCommand
                 return 0;
             }
         }
+    }
+
+    /// <summary>
+    /// Resolves which hostname to advertise. If running interactively,
+    /// offers the user a choice of machine name and local IPs.
+    /// </summary>
+    private static string ResolveAdvertiseHost()
+    {
+        var options = new List<string> { Environment.MachineName };
+
+        var localAddrs = Discovery.GetLocalAddresses();
+        options.AddRange(localAddrs);
+
+        if (options.Count == 1)
+            return options[0];
+
+        return AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("Which hostname/IP should the other machine use to connect?")
+                .AddChoices(options));
     }
 
     internal static async Task PromptToAddKeyAndAlias(IPlatform platform, KeyBundle remoteBundle)

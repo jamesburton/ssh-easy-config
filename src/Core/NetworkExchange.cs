@@ -24,7 +24,7 @@ public class NetworkExchange
         Action<string> onStatus,
         CancellationToken ct)
     {
-        var listener = new TcpListener(IPAddress.Loopback, _port);
+        var listener = new TcpListener(IPAddress.Any, _port);
         listener.Start();
         try
         {
