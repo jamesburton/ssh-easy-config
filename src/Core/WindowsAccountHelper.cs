@@ -98,6 +98,13 @@ public static class WindowsAccountHelper
         if (!Directory.Exists(directory))
             Directory.CreateDirectory(directory);
 
+        // If the file already exists with locked-down ACLs, grant ourselves write access first
+        if (File.Exists(path))
+        {
+            await platform.RunCommandAsync("icacls",
+                $"\"{path}\" /grant \"BUILTIN\\Administrators:(F)\"");
+        }
+
         // Read existing content or start fresh
         var existingContent = File.Exists(path) ? await File.ReadAllTextAsync(path) : "";
 
@@ -105,7 +112,7 @@ public static class WindowsAccountHelper
         var updatedContent = AuthorizedKeysManager.AddKey(existingContent, publicKey);
         await File.WriteAllTextAsync(path, updatedContent);
 
-        // Set ACLs: remove inheritance, grant SYSTEM and Administrators full control
+        // Set final ACLs: remove inheritance, grant only SYSTEM and Administrators
         await platform.RunCommandAsync("icacls",
             $"\"{path}\" /inheritance:r /grant \"SYSTEM:(F)\" /grant \"BUILTIN\\Administrators:(F)\"");
     }
