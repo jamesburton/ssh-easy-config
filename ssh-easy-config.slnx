@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SshEasyConfig.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SshEasyConfig.Tests/SshEasyConfig.Tests.csproj" />
+  </Folder>
+</Solution>
