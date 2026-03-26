@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using Spectre.Console;
 using SshEasyConfig.Core;
 using SshEasyConfig.Platform;
@@ -19,31 +20,16 @@ public static class SetupCommand
 
         try
         {
-            // Reconstruct the full command line.
-            // For .NET tools, Environment.ProcessPath is "dotnet.exe" and
-            // GetCommandLineArgs() is ["path/to/ssh-easy-config.dll", "setup"].
-            // We need to pass ALL of GetCommandLineArgs() to dotnet.
-            var processPath = Environment.ProcessPath;
-            var cmdLineArgs = Environment.GetCommandLineArgs();
+            // Get the package version from assembly informational version (set by MSBuild from PackageVersion)
+            var infoVersion = typeof(SetupCommand).Assembly
+                .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            // Strip any +metadata suffix (e.g. "0.2.6+abc123" → "0.2.6")
+            var versionStr = infoVersion?.Split('+')[0];
+            var versionSuffix = versionStr is not null ? $"@{versionStr}" : "";
+            var fullCommand = $"dnx ssh-easy-config{versionSuffix} setup";
 
             if (verbose)
-            {
-                AnsiConsole.MarkupLine($"[grey]ProcessPath: {Markup.Escape(processPath ?? "(null)")}[/]");
-                for (int i = 0; i < cmdLineArgs.Length; i++)
-                    AnsiConsole.MarkupLine($"[grey]Arg[{i}]: {Markup.Escape(cmdLineArgs[i])}[/]");
-            }
-
-            // Build the command: "{processPath}" arg0 arg1 arg2 ...
-            // arg0 is typically the DLL/exe path, arg1+ are the actual arguments
-            var quotedArgs = string.Join(" ",
-                cmdLineArgs.Select(a => a.Contains(' ') ? $"\"{a}\"" : a));
-            var fullCommand = $"\"{processPath}\" {quotedArgs}";
-
-            if (verbose)
-            {
-                AnsiConsole.MarkupLine($"[grey]Full command: {Markup.Escape(fullCommand)}[/]");
-                AnsiConsole.MarkupLine($"[grey]Will run: cmd.exe /k {Markup.Escape(fullCommand)}[/]");
-            }
+                AnsiConsole.MarkupLine($"[grey]Elevated command: cmd.exe /k {Markup.Escape(fullCommand)}[/]");
 
             var psi = new ProcessStartInfo
             {
