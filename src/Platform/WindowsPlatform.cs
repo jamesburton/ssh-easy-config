@@ -18,6 +18,12 @@ public class WindowsPlatform : IPlatform
     public string AuthorizedKeysFilename =>
         IsAdminUser() ? "administrators_authorized_keys" : "authorized_keys";
 
+    public bool IsElevated => IsAdminUser();
+
+    public PackageManager PackageManager => PackageManager.WinGet;
+
+    public FirewallType FirewallType => FirewallType.WindowsFirewall;
+
     public async Task SetFilePermissionsAsync(string path, SshFileKind kind)
     {
         var currentUser = Environment.UserName;
@@ -112,6 +118,27 @@ public class WindowsPlatform : IPlatform
         }
 
         return output;
+    }
+
+    public async Task<(int ExitCode, string StdOut, string StdErr)> TryRunCommandAsync(string command, string arguments)
+    {
+        using var process = new Process();
+        process.StartInfo = new ProcessStartInfo
+        {
+            FileName = command,
+            Arguments = arguments,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        process.Start();
+        var output = await process.StandardOutput.ReadToEndAsync();
+        var error = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        return (process.ExitCode, output, error);
     }
 
     internal static bool IsAdminUser()

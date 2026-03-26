@@ -13,6 +13,59 @@ public class LinuxPlatform : IPlatform
 
     public virtual string AuthorizedKeysFilename => "authorized_keys";
 
+    public virtual bool IsElevated
+    {
+        get
+        {
+            try
+            {
+                var result = TryRunCommandAsync("id", "-u").GetAwaiter().GetResult();
+                return result.ExitCode == 0 && result.StdOut.Trim() == "0";
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
+
+    public virtual PackageManager PackageManager
+    {
+        get
+        {
+            if (File.Exists("/usr/bin/apt") || File.Exists("/usr/bin/apt-get"))
+                return PackageManager.Apt;
+            if (File.Exists("/usr/bin/dnf"))
+                return PackageManager.Dnf;
+            if (File.Exists("/usr/bin/yum"))
+                return PackageManager.Yum;
+            return PackageManager.None;
+        }
+    }
+
+    public virtual FirewallType FirewallType
+    {
+        get
+        {
+            try
+            {
+                var result = TryRunCommandAsync("which", "ufw").GetAwaiter().GetResult();
+                if (result.ExitCode == 0 && !string.IsNullOrWhiteSpace(result.StdOut))
+                    return FirewallType.Ufw;
+
+                result = TryRunCommandAsync("which", "firewall-cmd").GetAwaiter().GetResult();
+                if (result.ExitCode == 0 && !string.IsNullOrWhiteSpace(result.StdOut))
+                    return FirewallType.Firewalld;
+
+                return FirewallType.Iptables;
+            }
+            catch
+            {
+                return FirewallType.Iptables;
+            }
+        }
+    }
+
     public virtual async Task SetFilePermissionsAsync(string path, SshFileKind kind)
     {
         var mode = kind switch
@@ -92,5 +145,26 @@ public class LinuxPlatform : IPlatform
         }
 
         return output;
+    }
+
+    public virtual async Task<(int ExitCode, string StdOut, string StdErr)> TryRunCommandAsync(string command, string arguments)
+    {
+        using var process = new Process();
+        process.StartInfo = new ProcessStartInfo
+        {
+            FileName = command,
+            Arguments = arguments,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        process.Start();
+        var output = await process.StandardOutput.ReadToEndAsync();
+        var error = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        return (process.ExitCode, output, error);
     }
 }

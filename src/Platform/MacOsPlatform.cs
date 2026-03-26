@@ -6,6 +6,18 @@ public class MacOsPlatform : LinuxPlatform
 
     public override string SshdConfigPath => "/etc/ssh/sshd_config";
 
+    public override PackageManager PackageManager
+    {
+        get
+        {
+            if (File.Exists("/opt/homebrew/bin/brew") || File.Exists("/usr/local/bin/brew"))
+                return PackageManager.Brew;
+            return PackageManager.None;
+        }
+    }
+
+    public override FirewallType FirewallType => FirewallType.Pf;
+
     public override async Task<bool> CheckFilePermissionsAsync(string path, SshFileKind kind)
     {
         var expectedMode = kind switch
