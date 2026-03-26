@@ -13,7 +13,15 @@
     <Authors>ssh-easy-config contributors</Authors>
     <Description>Cross-platform SSH key management, sharing, and diagnostics</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>ssh;ssh-config;ssh-keys;ed25519;cross-platform;diagnostics</PackageTags>
+    <RepositoryUrl>https://github.com/jamesburton/ssh-easy-config</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Makaretu.Dns.Multicast" Version="0.27.0" />
