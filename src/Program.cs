@@ -53,23 +53,6 @@ configCommand.SetAction(async (pr, _) =>
     await ConfigCommand.RunAsync(platform, pr.GetValue(configActionArg)));
 rootCommand.Subcommands.Add(configCommand);
 
-// root — interactive wizard (placeholder for Task 12)
-rootCommand.SetAction(async (_, _) =>
-{
-    AnsiConsole.MarkupLine("[bold blue]SSH Easy Config[/]\n");
-    var prompt = new SelectionPrompt<string>();
-    prompt.Title = "What would you like to do?";
-    prompt.AddChoices("Setup SSH keys", "Share keys", "Receive keys", "Diagnose connectivity", "Manage SSH config");
-    var action = AnsiConsole.Prompt(prompt);
-    return action switch
-    {
-        "Setup SSH keys" => await SetupCommand.RunAsync(platform),
-        "Share keys" => await ShareCommand.RunAsync(platform, "network", null),
-        "Receive keys" => await ReceiveCommand.RunAsync(platform, "network", null),
-        "Diagnose connectivity" => await DiagnoseCommand.RunAsync(platform, null, false, false),
-        "Manage SSH config" => await ConfigCommand.RunAsync(platform, null),
-        _ => 0
-    };
-});
+rootCommand.SetAction(async _ => await WizardCommand.RunAsync(platform));
 
 return await rootCommand.Parse(args).InvokeAsync();
