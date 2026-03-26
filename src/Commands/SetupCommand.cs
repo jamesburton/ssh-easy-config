@@ -8,14 +8,240 @@ public static class SetupCommand
 {
     public static async Task<int> RunAsync(IPlatform platform)
     {
-        AnsiConsole.Write(new Rule("[bold blue]SSH Easy Config - Setup[/]").LeftJustified());
+        AnsiConsole.Write(new Rule("[bold blue]SSH Easy Config - Setup Wizard[/]").LeftJustified());
+        AnsiConsole.WriteLine();
+
+        // ── Step 1: Detect state ──────────────────────────────────────────
+        AnsiConsole.Write(new Rule("[bold]Step 1: Detecting system state[/]").LeftJustified());
+        AnsiConsole.WriteLine();
+
+        bool sshdInstalled = false;
+        bool sshdRunning = false;
+        bool sshdEnabled = false;
+        bool firewallOpen = false;
+        bool isMsAccount = false;
+
+        await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("Scanning system...", async _ =>
+            {
+                sshdInstalled = await SshServerInstaller.IsSshdInstalledAsync(platform);
+                sshdRunning = await platform.IsSshServiceRunningAsync();
+                sshdEnabled = sshdInstalled && await SshServerInstaller.IsSshdEnabledAsync(platform);
+                firewallOpen = await FirewallManager.IsPort22OpenAsync(platform);
+                if (OperatingSystem.IsWindows())
+                    isMsAccount = WindowsAccountHelper.IsMicrosoftLinkedAccount();
+            });
+
+        var stateTable = new Table();
+        stateTable.AddColumn("Property");
+        stateTable.AddColumn("Value");
+        stateTable.AddRow("Platform", Markup.Escape(platform.Kind.ToString()));
+        stateTable.AddRow("Elevated / Root", platform.IsElevated ? "[green]Yes[/]" : "[yellow]No[/]");
+        stateTable.AddRow("sshd Installed", sshdInstalled ? "[green]Yes[/]" : "[red]No[/]");
+        stateTable.AddRow("sshd Running", sshdRunning ? "[green]Yes[/]" : "[red]No[/]");
+        stateTable.AddRow("sshd Enabled on Boot", sshdEnabled ? "[green]Yes[/]" : "[yellow]No[/]");
+        stateTable.AddRow("Firewall Port 22", firewallOpen ? "[green]Open[/]" : "[red]Blocked[/]");
+        stateTable.AddRow("Package Manager", Markup.Escape(platform.PackageManager.ToString()));
+        stateTable.AddRow("Firewall Type", Markup.Escape(platform.FirewallType.ToString()));
+        if (OperatingSystem.IsWindows())
+            stateTable.AddRow("MS-linked Account", isMsAccount ? "[yellow]Yes[/]" : "No");
+
+        AnsiConsole.Write(stateTable);
+        AnsiConsole.WriteLine();
+
+        // ── Step 2: Install sshd if missing ───────────────────────────────
+        if (!sshdInstalled)
+        {
+            AnsiConsole.Write(new Rule("[bold]Step 2: Install SSH Server[/]").LeftJustified());
+            AnsiConsole.WriteLine();
+
+            if (platform.Kind == PlatformKind.Windows && !platform.IsElevated)
+            {
+                AnsiConsole.MarkupLine("[red]Administrator privileges are required to install OpenSSH Server on Windows.[/]");
+                AnsiConsole.MarkupLine("[yellow]Please re-run this command from an elevated terminal.[/]");
+                return 1;
+            }
+
+            var installCmd = SshServerInstaller.GetInstallCommand(platform.Kind, platform.PackageManager);
+            AnsiConsole.MarkupLine($"[dim]Command: {Markup.Escape(installCmd.Command)} {Markup.Escape(installCmd.Arguments)}[/]");
+
+            var installConfirm = AnsiConsole.Prompt(
+                new ConfirmationPrompt("Install SSH server now?") { DefaultValue = true });
+
+            if (installConfirm)
+            {
+                await AnsiConsole.Status()
+                    .Spinner(Spinner.Known.Dots)
+                    .StartAsync("Installing SSH server...", async _ =>
+                    {
+                        await SshServerInstaller.InstallAsync(platform);
+                    });
+
+                sshdInstalled = true;
+                AnsiConsole.MarkupLine("[green]SSH server installed successfully.[/]");
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[yellow]Skipping SSH server installation.[/]");
+            }
+
+            AnsiConsole.WriteLine();
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[dim]Step 2: sshd already installed — skipping.[/]");
+        }
+
+        // ── Step 3: Start and enable sshd ─────────────────────────────────
+        if (sshdInstalled)
+        {
+            // Refresh running status after potential install
+            sshdRunning = await platform.IsSshServiceRunningAsync();
+
+            if (!sshdRunning)
+            {
+                AnsiConsole.Write(new Rule("[bold]Step 3: Start SSH Service[/]").LeftJustified());
+                AnsiConsole.WriteLine();
+
+                var startConfirm = AnsiConsole.Prompt(
+                    new ConfirmationPrompt("SSH service is not running. Start it now?") { DefaultValue = true });
+
+                if (startConfirm)
+                {
+                    await AnsiConsole.Status()
+                        .Spinner(Spinner.Known.Dots)
+                        .StartAsync("Starting SSH service...", async _ =>
+                        {
+                            await SshServerInstaller.StartAsync(platform);
+                        });
+
+                    sshdRunning = true;
+                    AnsiConsole.MarkupLine("[green]SSH service started.[/]");
+                }
+
+                AnsiConsole.WriteLine();
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[dim]Step 3: sshd already running — skipping.[/]");
+            }
+
+            // Enable on boot
+            sshdEnabled = await SshServerInstaller.IsSshdEnabledAsync(platform);
+            if (!sshdEnabled)
+            {
+                var enableConfirm = AnsiConsole.Prompt(
+                    new ConfirmationPrompt("SSH service is not enabled on boot. Enable it?") { DefaultValue = true });
+
+                if (enableConfirm)
+                {
+                    await AnsiConsole.Status()
+                        .Spinner(Spinner.Known.Dots)
+                        .StartAsync("Enabling SSH service on boot...", async _ =>
+                        {
+                            await SshServerInstaller.EnableAsync(platform);
+                        });
+
+                    AnsiConsole.MarkupLine("[green]SSH service enabled on boot.[/]");
+                }
+
+                AnsiConsole.WriteLine();
+            }
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[dim]Step 3: sshd not installed — skipping start/enable.[/]");
+        }
+
+        // ── Step 4: Open firewall ─────────────────────────────────────────
+        if (!firewallOpen && platform.FirewallType != FirewallType.None)
+        {
+            AnsiConsole.Write(new Rule("[bold]Step 4: Firewall Configuration[/]").LeftJustified());
+            AnsiConsole.WriteLine();
+
+            var fwConfirm = AnsiConsole.Prompt(
+                new ConfirmationPrompt("Port 22 appears blocked. Open it in the firewall?") { DefaultValue = true });
+
+            if (fwConfirm)
+            {
+                await AnsiConsole.Status()
+                    .Spinner(Spinner.Known.Dots)
+                    .StartAsync("Opening port 22...", async _ =>
+                    {
+                        await FirewallManager.OpenPort22Async(platform);
+                    });
+
+                firewallOpen = true;
+                AnsiConsole.MarkupLine("[green]Firewall rule added for port 22.[/]");
+            }
+
+            AnsiConsole.WriteLine();
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[dim]Step 4: Firewall already open or no firewall — skipping.[/]");
+        }
+
+        // ── Step 5: Windows MS account handling ───────────────────────────
+        if (OperatingSystem.IsWindows() && platform.Kind == PlatformKind.Windows && isMsAccount)
+        {
+            AnsiConsole.Write(new Rule("[bold]Step 5: Windows Microsoft Account Configuration[/]").LeftJustified());
+            AnsiConsole.WriteLine();
+
+            AnsiConsole.MarkupLine("[yellow]Microsoft-linked account detected.[/]");
+            AnsiConsole.MarkupLine("Windows OpenSSH requires a Match block in sshd_config for admin accounts.");
+
+            bool hasMatchBlock = false;
+            if (File.Exists(platform.SshdConfigPath))
+            {
+                var sshdContent = await File.ReadAllTextAsync(platform.SshdConfigPath);
+                hasMatchBlock = WindowsAccountHelper.SshdConfigHasMatchBlock(sshdContent);
+            }
+
+            if (!hasMatchBlock)
+            {
+                AnsiConsole.MarkupLine("[yellow]Match block for administrators is missing from sshd_config.[/]");
+
+                var matchConfirm = AnsiConsole.Prompt(
+                    new ConfirmationPrompt("Add Match block and restart sshd?") { DefaultValue = true });
+
+                if (matchConfirm)
+                {
+                    await AnsiConsole.Status()
+                        .Spinner(Spinner.Known.Dots)
+                        .StartAsync("Updating sshd_config...", async _ =>
+                        {
+                            await WindowsAccountHelper.EnsureMatchBlockAsync(platform);
+                            await platform.RestartSshServiceAsync();
+                        });
+
+                    AnsiConsole.MarkupLine("[green]Match block added and sshd restarted.[/]");
+                }
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[green]Match block already present in sshd_config.[/]");
+            }
+
+            AnsiConsole.WriteLine();
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[dim]Step 5: Windows MS account config — not applicable.[/]");
+        }
+
+        // ── Step 6: Generate keys ─────────────────────────────────────────
+        AnsiConsole.Write(new Rule("[bold]Step 6: SSH Key Generation[/]").LeftJustified());
         AnsiConsole.WriteLine();
 
         const string keyName = "id_ed25519";
+        SshKeyPair? keyPair = null;
+        string? publicKey = null;
 
         if (KeyManager.KeyExists(platform, keyName))
         {
-            var publicKey = await KeyManager.ReadPublicKeyAsync(platform, keyName);
+            publicKey = await KeyManager.ReadPublicKeyAsync(platform, keyName);
             var truncated = publicKey.Length > 60
                 ? publicKey[..30] + "..." + publicKey[^20..]
                 : publicKey;
@@ -29,10 +255,101 @@ public static class SetupCommand
             if (useExisting)
             {
                 AnsiConsole.MarkupLine("[green]Using existing key.[/]");
-                return 0;
+            }
+            else
+            {
+                keyPair = await GenerateNewKeyAsync(platform, keyName);
+                publicKey = keyPair.PublicKeyOpenSsh;
             }
         }
+        else
+        {
+            keyPair = await GenerateNewKeyAsync(platform, keyName);
+            publicKey = keyPair.PublicKeyOpenSsh;
+        }
 
+        // Windows admin + MS account: also set up admin authorized_keys
+        if (OperatingSystem.IsWindows() && platform.IsElevated && isMsAccount && publicKey != null)
+        {
+            await AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .StartAsync("Setting up admin authorized_keys...", async _ =>
+                {
+                    await WindowsAccountHelper.SetupAdminAuthorizedKeysAsync(platform, publicKey.Trim());
+                });
+
+            AnsiConsole.MarkupLine("[green]Admin authorized_keys configured.[/]");
+        }
+
+        AnsiConsole.WriteLine();
+
+        // ── Step 7: Fix permissions ───────────────────────────────────────
+        AnsiConsole.Write(new Rule("[bold]Step 7: File Permissions[/]").LeftJustified());
+        AnsiConsole.WriteLine();
+
+        await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("Checking and fixing permissions...", async _ =>
+            {
+                var sshDir = platform.SshDirectoryPath;
+
+                if (Directory.Exists(sshDir))
+                {
+                    var dirOk = await platform.CheckFilePermissionsAsync(sshDir, SshFileKind.SshDirectory);
+                    if (!dirOk)
+                        await platform.SetFilePermissionsAsync(sshDir, SshFileKind.SshDirectory);
+
+                    var privateKeyPath = Path.Combine(sshDir, keyName);
+                    if (File.Exists(privateKeyPath))
+                    {
+                        var keyOk = await platform.CheckFilePermissionsAsync(privateKeyPath, SshFileKind.PrivateKey);
+                        if (!keyOk)
+                            await platform.SetFilePermissionsAsync(privateKeyPath, SshFileKind.PrivateKey);
+                    }
+
+                    var authKeysPath = Path.Combine(sshDir, platform.AuthorizedKeysFilename);
+                    if (File.Exists(authKeysPath))
+                    {
+                        var akOk = await platform.CheckFilePermissionsAsync(authKeysPath, SshFileKind.AuthorizedKeys);
+                        if (!akOk)
+                            await platform.SetFilePermissionsAsync(authKeysPath, SshFileKind.AuthorizedKeys);
+                    }
+                }
+            });
+
+        AnsiConsole.MarkupLine("[green]Permissions verified and fixed.[/]");
+        AnsiConsole.WriteLine();
+
+        // ── Step 8: Validate ──────────────────────────────────────────────
+        AnsiConsole.Write(new Rule("[bold]Step 8: Validation[/]").LeftJustified());
+        AnsiConsole.WriteLine();
+
+        await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("Testing SSH connection to localhost...", async _ =>
+            {
+                var result = await platform.TryRunCommandAsync("ssh",
+                    "-o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 localhost exit 0");
+
+                if (result.ExitCode == 0)
+                {
+                    AnsiConsole.MarkupLine("[green]SSH connection to localhost succeeded![/]");
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine("[yellow]SSH connection to localhost failed.[/]");
+                    AnsiConsole.MarkupLine("[dim]This may be expected if authorized_keys is not yet configured.[/]");
+                    AnsiConsole.MarkupLine("Run [bold]ssh-easy-config diagnose[/] for detailed troubleshooting.");
+                }
+            });
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.Write(new Rule("[bold green]Setup Complete[/]").LeftJustified());
+        return 0;
+    }
+
+    private static async Task<SshKeyPair> GenerateNewKeyAsync(IPlatform platform, string keyName)
+    {
         var defaultComment = $"{Environment.UserName}@{Environment.MachineName}";
         var comment = AnsiConsole.Prompt(
             new TextPrompt<string>("Key comment:")
@@ -50,10 +367,9 @@ public static class SetupCommand
             });
 
         AnsiConsole.MarkupLine("[green]Key pair generated and saved.[/]");
-        AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine($"[bold]Public key:[/] {Markup.Escape(keyPair!.PublicKeyOpenSsh.Trim())}");
         AnsiConsole.MarkupLine($"[bold]Fingerprint:[/] {PairingProtocol.ComputeFingerprint(keyPair.PublicKeyOpenSsh.Trim())}");
 
-        return 0;
+        return keyPair;
     }
 }
