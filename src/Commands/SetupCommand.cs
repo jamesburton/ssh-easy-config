@@ -9,6 +9,7 @@ public static class SetupCommand
 {
     /// <summary>
     /// Relaunches the current process as Administrator on Windows.
+    /// Uses cmd /k to keep the window open so the user can see output.
     /// Returns true if relaunch was initiated (caller should exit).
     /// </summary>
     private static bool TryRelaunchElevated()
@@ -18,15 +19,22 @@ public static class SetupCommand
 
         try
         {
-            var exePath = Environment.ProcessPath;
-            if (exePath is null)
-                return false;
+            // Reconstruct the command line for the elevated process.
+            // For .NET tools installed globally, the tool name is on PATH.
+            // For local dev, use dotnet run. We use cmd /k to keep the window open.
+            var toolCommand = "ssh-easy-config setup";
 
-            var args = string.Join(" ", Environment.GetCommandLineArgs().Skip(1));
+            // Check if we're running as a global tool (exe exists on PATH)
+            var exePath = Environment.ProcessPath;
+            if (exePath is not null && exePath.EndsWith("ssh-easy-config.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                toolCommand = $"\"{exePath}\" setup";
+            }
+
             var psi = new ProcessStartInfo
             {
-                FileName = exePath,
-                Arguments = args,
+                FileName = "cmd.exe",
+                Arguments = $"/k {toolCommand}",
                 UseShellExecute = true,
                 Verb = "runas" // triggers UAC prompt
             };
