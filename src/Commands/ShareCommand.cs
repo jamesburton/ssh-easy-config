@@ -135,23 +135,26 @@ public static class ShareCommand
     }
 
     /// <summary>
-    /// Resolves which hostname to advertise. If running interactively,
-    /// offers the user a choice of machine name and local IPs.
+    /// Resolves which hostname to advertise. Detects Tailscale, mDNS .local,
+    /// machine name, and local IPs, then lets the user pick.
     /// </summary>
     private static string ResolveAdvertiseHost()
     {
-        var options = new List<string> { Environment.MachineName };
-
-        var localAddrs = Discovery.GetLocalAddresses();
-        options.AddRange(localAddrs);
+        var options = Discovery.GetAdvertiseOptions();
 
         if (options.Count == 1)
-            return options[0];
+            return options[0].Address;
 
-        return AnsiConsole.Prompt(
+        // Format as "address (label)" for display, map back to address
+        var displayChoices = options.Select(o => $"{o.Address} ({o.Label})").ToList();
+
+        var selection = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
                 .Title("Which hostname/IP should the other machine use to connect?")
-                .AddChoices(options));
+                .AddChoices(displayChoices));
+
+        var idx = displayChoices.IndexOf(selection);
+        return options[idx].Address;
     }
 
     internal static async Task PromptToAddKeyAndAlias(IPlatform platform, KeyBundle remoteBundle)
