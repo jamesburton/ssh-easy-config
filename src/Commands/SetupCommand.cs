@@ -19,26 +19,14 @@ public static class SetupCommand
 
         try
         {
-            // Reconstruct the exact command that launched us.
-            // Environment.ProcessPath gives the actual exe/dll being run.
+            // Relaunch the exact same process with the same arguments, elevated.
             var exePath = Environment.ProcessPath;
-            string toolCommand;
-
-            if (exePath is not null && File.Exists(exePath))
-            {
-                // Running as a .NET tool or direct exe — relaunch the same binary
-                toolCommand = $"\"{exePath}\" setup";
-            }
-            else
-            {
-                // Fallback: use dnx which works without global install
-                toolCommand = "dnx ssh-easy-config setup";
-            }
+            var args = string.Join(" ", Environment.GetCommandLineArgs().Skip(1));
 
             var psi = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
-                Arguments = $"/k {toolCommand}",
+                Arguments = $"/k \"{exePath}\" {args}",
                 UseShellExecute = true,
                 Verb = "runas" // triggers UAC prompt
             };
