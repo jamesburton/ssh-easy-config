@@ -20,7 +20,20 @@ public static class ShareCommand
         var publicKey = await KeyManager.ReadPublicKeyAsync(platform, keyName);
 
         // Determine the hostname to advertise
-        var advertiseHost = host ?? ResolveAdvertiseHost();
+        string advertiseHost;
+        if (host is not null)
+        {
+            advertiseHost = host;
+            AnsiConsole.MarkupLine($"[grey]Using specified host:[/] {Markup.Escape(advertiseHost)}");
+        }
+        else if (mode.Equals("network", StringComparison.OrdinalIgnoreCase))
+        {
+            advertiseHost = ResolveAdvertiseHost();
+        }
+        else
+        {
+            advertiseHost = Environment.MachineName;
+        }
 
         var bundle = new KeyBundle(
             publicKey.Trim(),
@@ -140,10 +153,25 @@ public static class ShareCommand
     /// </summary>
     private static string ResolveAdvertiseHost()
     {
+        AnsiConsole.MarkupLine("[grey]Detecting available hostnames...[/]");
         var options = Discovery.GetAdvertiseOptions();
 
+        if (options.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]No hostnames detected, using machine name.[/]");
+            return Environment.MachineName;
+        }
+
+        // Always show what was detected
+        foreach (var (addr, label) in options)
+            AnsiConsole.MarkupLine($"  [grey]Found:[/] {Markup.Escape(addr)} [dim]({Markup.Escape(label)})[/]");
+        AnsiConsole.WriteLine();
+
         if (options.Count == 1)
+        {
+            AnsiConsole.MarkupLine($"[grey]Using:[/] {Markup.Escape(options[0].Address)}");
             return options[0].Address;
+        }
 
         // Format as "address (label)" for display, map back to address
         var displayChoices = options.Select(o => $"{o.Address} ({o.Label})").ToList();
