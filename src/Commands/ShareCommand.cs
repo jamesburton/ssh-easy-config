@@ -99,7 +99,7 @@ public static class ShareCommand
                     .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
                 var versionStr = infoVersion?.Split('+')[0];
                 var versionSuffix = versionStr is not null ? $"@{versionStr}" : "";
-                var receiveCmd = $"dnx ssh-easy-config{versionSuffix} receive --host {advertiseHost} --code {pairingCode}";
+                var receiveCmd = $"dnx ssh-easy-config{versionSuffix} receive --host {advertiseHost} --port {listenPort} --code {pairingCode}";
 
                 AnsiConsole.MarkupLine($"[bold]Pairing code:[/] [yellow]{pairingCode}[/]");
                 AnsiConsole.MarkupLine($"[bold]Hostname:[/] {Markup.Escape(advertiseHost)}");

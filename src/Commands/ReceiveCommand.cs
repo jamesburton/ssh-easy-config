@@ -6,7 +6,7 @@ namespace SshEasyConfig.Commands;
 
 public static class ReceiveCommand
 {
-    public static async Task<int> RunAsync(IPlatform platform, string mode, string? input, string? host = null, string? code = null)
+    public static async Task<int> RunAsync(IPlatform platform, string mode, string? input, string? host = null, string? code = null, int? port = null)
     {
         const string keyName = "id_ed25519";
 
@@ -82,22 +82,22 @@ public static class ReceiveCommand
                 AnsiConsole.WriteLine();
 
                 string connectHost;
-                int port;
+                int connectPort;
 
-                if (host is not null)
+                if (host is not null && port is not null)
                 {
-                    // --host was provided, use it directly
+                    // Both --host and --port provided — fully specified, skip mDNS
                     connectHost = host;
-                    port = 0; // will need to get from mDNS or prompt
+                    connectPort = port.Value;
                 }
                 else
                 {
-                    connectHost = null!;
-                    port = 0;
+                    connectHost = host!;
+                    connectPort = port ?? 0;
                 }
 
-                // If no --host or we need a port, try mDNS
-                if (host is null || port == 0)
+                // If we still need host or port, try mDNS
+                if (connectHost is null || connectPort == 0)
                 {
                     AnsiConsole.MarkupLine("[grey]Searching for nearby ssh-easy-config instances...[/]");
                     var services = await Discovery.BrowseAsync(TimeSpan.FromSeconds(3));
@@ -126,13 +126,13 @@ public static class ReceiveCommand
 
                         if (selection == "Enter manually")
                         {
-                            (connectHost, port) = PromptForHostPort();
+                            (connectHost, connectPort) = PromptForHostPort();
                         }
                         else
                         {
                             var idx = choices.IndexOf(selection);
                             var service = merged[idx];
-                            port = service.Port;
+                            connectPort = service.Port;
 
                             if (host is not null)
                             {
@@ -170,12 +170,12 @@ public static class ReceiveCommand
                         if (host is not null)
                         {
                             connectHost = host;
-                            port = AnsiConsole.Prompt(
+                            connectPort = AnsiConsole.Prompt(
                                 new TextPrompt<int>("Enter port:").DefaultValue(12345));
                         }
                         else
                         {
-                            (connectHost, port) = PromptForHostPort();
+                            (connectHost, connectPort) = PromptForHostPort();
                         }
                     }
                 }
@@ -183,7 +183,7 @@ public static class ReceiveCommand
                 var pairingCode = code ?? AnsiConsole.Prompt(
                     new TextPrompt<string>("Enter pairing code:"));
 
-                AnsiConsole.MarkupLine($"[grey]Connecting to {Markup.Escape(connectHost)}:{port}...[/]");
+                AnsiConsole.MarkupLine($"[grey]Connecting to {Markup.Escape(connectHost)}:{connectPort}...[/]");
 
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
@@ -191,7 +191,7 @@ public static class ReceiveCommand
                 {
                     var exchange = new NetworkExchange();
                     remoteBundle = await exchange.ConnectAndExchangeAsync(
-                        connectHost, port, localBundle, pairingCode, cts.Token);
+                        connectHost, connectPort, localBundle, pairingCode, cts.Token);
                 }
                 catch (OperationCanceledException)
                 {

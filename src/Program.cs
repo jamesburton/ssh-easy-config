@@ -30,19 +30,21 @@ shareCommand.SetAction(async (pr, _) =>
     await ShareCommand.RunAsync(platform, pr.GetValue(shareModeOption)!, pr.GetValue(shareOutputOption), pr.GetValue(shareHostOption)));
 rootCommand.Subcommands.Add(shareCommand);
 
-// receive — options: --mode, --input, --host, --code
+// receive — options: --mode, --input, --host, --code, --port
 var receiveCommand = new Command("receive", "Listen for incoming key share");
 var receiveModeOption = new Option<string>("--mode") { Description = "Transfer mode: network, clipboard, file" };
 receiveModeOption.DefaultValueFactory = _ => "network";
 var receiveInputOption = new Option<string?>("--input") { Description = "Input file path (for file mode)" };
 var receiveHostOption = new Option<string?>("--host") { Description = "Hostname/IP to connect to (e.g. mypc.tail12345.ts.net)" };
 var receiveCodeOption = new Option<string?>("--code") { Description = "Pairing code (skip prompt)" };
+var receivePortOption = new Option<int?>("--port") { Description = "Port to connect to (skip mDNS discovery)" };
 receiveCommand.Options.Add(receiveModeOption);
 receiveCommand.Options.Add(receiveInputOption);
 receiveCommand.Options.Add(receiveHostOption);
 receiveCommand.Options.Add(receiveCodeOption);
+receiveCommand.Options.Add(receivePortOption);
 receiveCommand.SetAction(async (pr, _) =>
-    await ReceiveCommand.RunAsync(platform, pr.GetValue(receiveModeOption)!, pr.GetValue(receiveInputOption), pr.GetValue(receiveHostOption), pr.GetValue(receiveCodeOption)));
+    await ReceiveCommand.RunAsync(platform, pr.GetValue(receiveModeOption)!, pr.GetValue(receiveInputOption), pr.GetValue(receiveHostOption), pr.GetValue(receiveCodeOption), pr.GetValue(receivePortOption)));
 rootCommand.Subcommands.Add(receiveCommand);
 
 // diagnose — argument: host (optional), options: --json, --verbose
