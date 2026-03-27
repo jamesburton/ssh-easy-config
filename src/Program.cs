@@ -6,13 +6,15 @@ using SshEasyConfig.Platform;
 var platform = PlatformDetector.Detect();
 var rootCommand = new RootCommand("ssh-easy-config - Cross-platform SSH key management, sharing, and diagnostics");
 
-// setup — options: --verbose, -y
+// setup — options: --verbose, -y/--yes, --approve-admin
 var setupCommand = new Command("setup", "Generate SSH keys and configure SSH");
 var setupVerboseOption = new Option<bool>("--verbose") { Description = "Show diagnostic details during setup" };
 var setupYesOption = new Option<bool>("--yes", "-y") { Description = "Auto-confirm all prompts" };
+var setupApproveAdminOption = new Option<bool>("--approve-admin") { Description = "Launch as Administrator without prompting (UAC still required)" };
 setupCommand.Options.Add(setupVerboseOption);
 setupCommand.Options.Add(setupYesOption);
-setupCommand.SetAction(async (pr, _) => await SetupCommand.RunAsync(platform, pr.GetValue(setupVerboseOption), pr.GetValue(setupYesOption)));
+setupCommand.Options.Add(setupApproveAdminOption);
+setupCommand.SetAction(async (pr, _) => await SetupCommand.RunAsync(platform, pr.GetValue(setupVerboseOption), pr.GetValue(setupYesOption), pr.GetValue(setupApproveAdminOption)));
 rootCommand.Subcommands.Add(setupCommand);
 
 // share — options: --mode (network|clipboard|file), --output, --host
