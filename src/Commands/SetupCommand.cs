@@ -437,24 +437,51 @@ public static class SetupCommand
         AnsiConsole.Write(new Rule("[bold]Step 8: Validation[/]").LeftJustified());
         AnsiConsole.WriteLine();
 
-        await AnsiConsole.Status()
-            .Spinner(Spinner.Known.Dots)
-            .StartAsync("Testing SSH connection to localhost...", async _ =>
+        try
+        {
+            // Find ssh client — may not be on PATH on Windows
+            var sshPath = "ssh";
+            if (platform.Kind == PlatformKind.Windows)
             {
-                var result = await platform.TryRunCommandAsync("ssh",
-                    "-o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 localhost exit 0");
-
-                if (result.ExitCode == 0)
-                {
-                    AnsiConsole.MarkupLine("[green]SSH connection to localhost succeeded![/]");
-                }
+                var systemSsh = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.System),
+                    "OpenSSH", "ssh.exe");
+                if (File.Exists(systemSsh))
+                    sshPath = systemSsh;
                 else
                 {
-                    AnsiConsole.MarkupLine("[yellow]SSH connection to localhost failed.[/]");
-                    AnsiConsole.MarkupLine("[dim]This may be expected if authorized_keys is not yet configured.[/]");
-                    AnsiConsole.MarkupLine("Run [bold]ssh-easy-config diagnose[/] for detailed troubleshooting.");
+                    var progSsh = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                        "OpenSSH", "ssh.exe");
+                    if (File.Exists(progSsh))
+                        sshPath = progSsh;
                 }
-            });
+            }
+
+            await AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .StartAsync("Testing SSH connection to localhost...", async _ =>
+                {
+                    var result = await platform.TryRunCommandAsync(sshPath,
+                        "-o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 localhost exit 0");
+
+                    if (result.ExitCode == 0)
+                    {
+                        AnsiConsole.MarkupLine("[green]SSH connection to localhost succeeded![/]");
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine("[yellow]SSH connection to localhost failed.[/]");
+                        AnsiConsole.MarkupLine("[dim]This may be expected if authorized_keys is not yet configured.[/]");
+                        AnsiConsole.MarkupLine("Run [bold]ssh-easy-config diagnose[/] for detailed troubleshooting.");
+                    }
+                });
+        }
+        catch (Exception)
+        {
+            AnsiConsole.MarkupLine("[yellow]SSH client not found — skipping validation.[/]");
+            AnsiConsole.MarkupLine("[dim]Install OpenSSH Client to enable connection testing.[/]");
+        }
 
         AnsiConsole.WriteLine();
         AnsiConsole.Write(new Rule("[bold green]Setup Complete[/]").LeftJustified());
