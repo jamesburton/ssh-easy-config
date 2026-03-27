@@ -1,3 +1,4 @@
+using SshEasyConfig.Commands;
 using SshEasyConfig.Core;
 using SshEasyConfig.Platform;
 
@@ -158,6 +159,130 @@ public class DiagnosticRunner
                     CheckStatus.Warn,
                     $"Could not read sshd_config: {ex.Message}"));
             }
+        }
+
+        // Layer 4b: Windows MS-linked account checks
+        if (OperatingSystem.IsWindows() && _platform.Kind == PlatformKind.Windows)
+        {
+            try
+            {
+                var isMsAccount = WindowsAccountHelper.IsMicrosoftLinkedAccount();
+                if (isMsAccount)
+                {
+                    results.Add(new DiagnosticResult(
+                        "Windows MS Account",
+                        CheckStatus.Pass,
+                        "Microsoft-linked account detected — admin authorized_keys required"));
+
+                    var adminKeysPath = WindowsAccountHelper.GetAdminAuthorizedKeysPath();
+                    var userKeysPath = Path.Combine(_platform.SshDirectoryPath, "authorized_keys");
+
+                    // Check if administrators_authorized_keys exists and has keys
+                    if (!File.Exists(adminKeysPath))
+                    {
+                        var hasUserKeys = File.Exists(userKeysPath) &&
+                            (await File.ReadAllTextAsync(userKeysPath)).Trim().Length > 0;
+
+                        results.Add(new DiagnosticResult(
+                            "Admin authorized_keys",
+                            CheckStatus.Fail,
+                            "administrators_authorized_keys does not exist" +
+                                (hasUserKeys ? " (but keys found in user authorized_keys)" : ""),
+                            "Run: ssh-easy-config config fix (as Administrator)",
+                            AutoFixAvailable: true,
+                            FixAction: async () =>
+                            {
+                                await ConfigCommand.RunFixAsync(_platform);
+                            }));
+                    }
+                    else
+                    {
+                        // File exists — check if user keys are missing from it
+                        var adminContent = "";
+                        try
+                        {
+                            await _platform.RunCommandAsync("icacls",
+                                $"\"{adminKeysPath}\" /grant \"BUILTIN\\Administrators:(R)\"");
+                            adminContent = await File.ReadAllTextAsync(adminKeysPath);
+                        }
+                        catch { }
+
+                        if (string.IsNullOrWhiteSpace(adminContent))
+                        {
+                            results.Add(new DiagnosticResult(
+                                "Admin authorized_keys",
+                                CheckStatus.Warn,
+                                "administrators_authorized_keys exists but is empty or unreadable",
+                                "Run: ssh-easy-config config fix (as Administrator)",
+                                AutoFixAvailable: true,
+                                FixAction: async () => await ConfigCommand.RunFixAsync(_platform)));
+                        }
+                        else if (File.Exists(userKeysPath))
+                        {
+                            // Check for keys in user file that aren't in admin file
+                            var userContent = await File.ReadAllTextAsync(userKeysPath);
+                            var userKeys = userContent.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                                .Where(l => !string.IsNullOrWhiteSpace(l) && !l.TrimStart().StartsWith('#'))
+                                .Select(l => l.Trim().Split(' ').Length >= 2 ? l.Trim().Split(' ')[0] + " " + l.Trim().Split(' ')[1] : "")
+                                .Where(k => k.Length > 0)
+                                .ToHashSet();
+
+                            var adminKeys = adminContent.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                                .Where(l => !string.IsNullOrWhiteSpace(l) && !l.TrimStart().StartsWith('#'))
+                                .Select(l => l.Trim().Split(' ').Length >= 2 ? l.Trim().Split(' ')[0] + " " + l.Trim().Split(' ')[1] : "")
+                                .Where(k => k.Length > 0)
+                                .ToHashSet();
+
+                            var missingKeys = userKeys.Except(adminKeys).ToList();
+                            if (missingKeys.Count > 0)
+                            {
+                                results.Add(new DiagnosticResult(
+                                    "Admin authorized_keys",
+                                    CheckStatus.Warn,
+                                    $"{missingKeys.Count} key(s) in authorized_keys not in administrators_authorized_keys",
+                                    "Run: ssh-easy-config config fix (as Administrator)",
+                                    AutoFixAvailable: true,
+                                    FixAction: async () => await ConfigCommand.RunFixAsync(_platform)));
+                            }
+                            else
+                            {
+                                results.Add(new DiagnosticResult(
+                                    "Admin authorized_keys",
+                                    CheckStatus.Pass,
+                                    "administrators_authorized_keys has all keys"));
+                            }
+                        }
+                        else
+                        {
+                            results.Add(new DiagnosticResult(
+                                "Admin authorized_keys",
+                                CheckStatus.Pass,
+                                "administrators_authorized_keys is configured"));
+                        }
+                    }
+
+                    // Check Match block (may already be checked above, but be explicit for MS accounts)
+                    if (File.Exists(_platform.SshdConfigPath))
+                    {
+                        var content = await File.ReadAllTextAsync(_platform.SshdConfigPath);
+                        if (!WindowsAccountHelper.SshdConfigHasMatchBlock(content))
+                        {
+                            // Only add if not already added by the general sshd_config check above
+                            if (!results.Any(r => r.CheckName == "sshd: Match Group administrators"))
+                            {
+                                results.Add(new DiagnosticResult(
+                                    "sshd: Match Group administrators",
+                                    CheckStatus.Fail,
+                                    "Match block required for MS account admin SSH — missing from sshd_config",
+                                    "Run: ssh-easy-config config fix (as Administrator)",
+                                    AutoFixAvailable: true,
+                                    FixAction: async () => await ConfigCommand.RunFixAsync(_platform)));
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
         }
 
         // Layer 5: WSL checks

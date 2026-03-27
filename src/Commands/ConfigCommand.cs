@@ -199,7 +199,7 @@ public static class ConfigCommand
         return 0;
     }
 
-    private static async Task<int> RunFixAsync(IPlatform platform)
+    internal static async Task<int> RunFixAsync(IPlatform platform)
     {
         AnsiConsole.Write(new Rule("[bold blue]SSH Configuration Fix[/]").LeftJustified());
         AnsiConsole.WriteLine();
