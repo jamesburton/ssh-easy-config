@@ -6,11 +6,13 @@ using SshEasyConfig.Platform;
 var platform = PlatformDetector.Detect();
 var rootCommand = new RootCommand("ssh-easy-config - Cross-platform SSH key management, sharing, and diagnostics");
 
-// setup — options: --verbose
+// setup — options: --verbose, -y
 var setupCommand = new Command("setup", "Generate SSH keys and configure SSH");
 var setupVerboseOption = new Option<bool>("--verbose") { Description = "Show diagnostic details during setup" };
+var setupYesOption = new Option<bool>("--yes", "-y") { Description = "Auto-confirm all prompts" };
 setupCommand.Options.Add(setupVerboseOption);
-setupCommand.SetAction(async (pr, _) => await SetupCommand.RunAsync(platform, pr.GetValue(setupVerboseOption)));
+setupCommand.Options.Add(setupYesOption);
+setupCommand.SetAction(async (pr, _) => await SetupCommand.RunAsync(platform, pr.GetValue(setupVerboseOption), pr.GetValue(setupYesOption)));
 rootCommand.Subcommands.Add(setupCommand);
 
 // share — options: --mode (network|clipboard|file), --output, --host
@@ -26,17 +28,19 @@ shareCommand.SetAction(async (pr, _) =>
     await ShareCommand.RunAsync(platform, pr.GetValue(shareModeOption)!, pr.GetValue(shareOutputOption), pr.GetValue(shareHostOption)));
 rootCommand.Subcommands.Add(shareCommand);
 
-// receive — options: --mode, --input, --host
+// receive — options: --mode, --input, --host, --code
 var receiveCommand = new Command("receive", "Listen for incoming key share");
 var receiveModeOption = new Option<string>("--mode") { Description = "Transfer mode: network, clipboard, file" };
 receiveModeOption.DefaultValueFactory = _ => "network";
 var receiveInputOption = new Option<string?>("--input") { Description = "Input file path (for file mode)" };
 var receiveHostOption = new Option<string?>("--host") { Description = "Hostname/IP to connect to (e.g. mypc.tail12345.ts.net)" };
+var receiveCodeOption = new Option<string?>("--code") { Description = "Pairing code (skip prompt)" };
 receiveCommand.Options.Add(receiveModeOption);
 receiveCommand.Options.Add(receiveInputOption);
 receiveCommand.Options.Add(receiveHostOption);
+receiveCommand.Options.Add(receiveCodeOption);
 receiveCommand.SetAction(async (pr, _) =>
-    await ReceiveCommand.RunAsync(platform, pr.GetValue(receiveModeOption)!, pr.GetValue(receiveInputOption), pr.GetValue(receiveHostOption)));
+    await ReceiveCommand.RunAsync(platform, pr.GetValue(receiveModeOption)!, pr.GetValue(receiveInputOption), pr.GetValue(receiveHostOption), pr.GetValue(receiveCodeOption)));
 rootCommand.Subcommands.Add(receiveCommand);
 
 // diagnose — argument: host (optional), options: --json, --verbose

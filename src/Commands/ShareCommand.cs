@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using Spectre.Console;
 using SshEasyConfig.Core;
 using SshEasyConfig.Platform;
@@ -93,16 +94,21 @@ public static class ShareCommand
                 // Wait for port assignment
                 await Task.Delay(200);
 
+                // Build the receive command for the other machine
+                var infoVersion = typeof(ShareCommand).Assembly
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+                var versionStr = infoVersion?.Split('+')[0];
+                var versionSuffix = versionStr is not null ? $"@{versionStr}" : "";
+                var receiveCmd = $"dnx ssh-easy-config{versionSuffix} receive --host {advertiseHost} --code {pairingCode}";
+
                 AnsiConsole.MarkupLine($"[bold]Pairing code:[/] [yellow]{pairingCode}[/]");
                 AnsiConsole.MarkupLine($"[bold]Hostname:[/] {Markup.Escape(advertiseHost)}");
                 AnsiConsole.MarkupLine($"[bold]Port:[/] {listenPort}");
-
-                // Show local IPs for manual connection
-                var localAddrs = Discovery.GetLocalAddresses();
-                if (localAddrs.Count > 0)
-                    AnsiConsole.MarkupLine($"[bold]Local IPs:[/] {string.Join(", ", localAddrs)}");
-
-                AnsiConsole.MarkupLine("[grey]Share the pairing code with the receiving machine.[/]");
+                AnsiConsole.WriteLine();
+                AnsiConsole.MarkupLine($"[bold]Receive command:[/] [dim]{Markup.Escape(receiveCmd)}[/]");
+                AnsiConsole.WriteLine();
+                AnsiConsole.MarkupLine("[grey]Keys:  [bold]c[/] = copy pairing code  |  [bold]d[/] = copy receive command  |  [bold]q[/]/[bold]Esc[/] = cancel[/]");
+                AnsiConsole.MarkupLine("[grey]Waiting for connection...[/]");
 
                 // Advertise via mDNS
                 IDisposable? advertisement = null;
@@ -119,10 +125,38 @@ public static class ShareCommand
                     // mDNS advertising is optional
                 }
 
-                AnsiConsole.MarkupLine("[grey]Waiting for connection...[/]");
-
+                // Wait for connection with keyboard handling
                 try
                 {
+                    while (!listenTask.IsCompleted)
+                    {
+                        if (Console.KeyAvailable)
+                        {
+                            var key = Console.ReadKey(intercept: true);
+                            switch (key.Key)
+                            {
+                                case ConsoleKey.Q:
+                                case ConsoleKey.Escape:
+                                    AnsiConsole.MarkupLine("\n[yellow]Cancelled.[/]");
+                                    cts.Cancel();
+                                    try { await listenTask; } catch { }
+                                    return 0;
+
+                                case ConsoleKey.C:
+                                    CopyToClipboard(pairingCode);
+                                    AnsiConsole.MarkupLine("[green]Pairing code copied to clipboard.[/]");
+                                    break;
+
+                                case ConsoleKey.D:
+                                    CopyToClipboard(receiveCmd);
+                                    AnsiConsole.MarkupLine("[green]Receive command copied to clipboard.[/]");
+                                    break;
+                            }
+                        }
+
+                        await Task.Delay(100);
+                    }
+
                     await listenTask;
                 }
                 finally
@@ -184,6 +218,60 @@ public static class ShareCommand
 
         var idx = displayChoices.IndexOf(selection);
         return options[idx].Address;
+    }
+
+    /// <summary>
+    /// Cross-platform clipboard copy using platform-native commands.
+    /// </summary>
+    private static void CopyToClipboard(string text)
+    {
+        try
+        {
+            System.Diagnostics.Process process;
+            if (OperatingSystem.IsWindows())
+            {
+                process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c echo {text.Replace("\"", "\\\"")}| clip",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                })!;
+            }
+            else if (OperatingSystem.IsMacOS())
+            {
+                process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "pbcopy",
+                    RedirectStandardInput = true,
+                    UseShellExecute = false
+                })!;
+                process.StandardInput.Write(text);
+                process.StandardInput.Close();
+            }
+            else
+            {
+                // Linux: try xclip, then xsel, then wl-copy
+                var clipCmd = File.Exists("/usr/bin/xclip") ? "xclip"
+                    : File.Exists("/usr/bin/xsel") ? "xsel"
+                    : "wl-copy";
+                var args = clipCmd == "xclip" ? "-selection clipboard" : clipCmd == "xsel" ? "--clipboard" : "";
+                process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = clipCmd,
+                    Arguments = args,
+                    RedirectStandardInput = true,
+                    UseShellExecute = false
+                })!;
+                process.StandardInput.Write(text);
+                process.StandardInput.Close();
+            }
+            process.WaitForExit(2000);
+        }
+        catch
+        {
+            // Clipboard not available — silently fail, message already shown
+        }
     }
 
     internal static async Task PromptToAddKeyAndAlias(IPlatform platform, KeyBundle remoteBundle)

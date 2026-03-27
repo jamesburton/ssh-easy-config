@@ -6,7 +6,7 @@ namespace SshEasyConfig.Commands;
 
 public static class ReceiveCommand
 {
-    public static async Task<int> RunAsync(IPlatform platform, string mode, string? input, string? host = null)
+    public static async Task<int> RunAsync(IPlatform platform, string mode, string? input, string? host = null, string? code = null)
     {
         const string keyName = "id_ed25519";
 
@@ -180,7 +180,7 @@ public static class ReceiveCommand
                     }
                 }
 
-                var pairingCode = AnsiConsole.Prompt(
+                var pairingCode = code ?? AnsiConsole.Prompt(
                     new TextPrompt<string>("Enter pairing code:"));
 
                 AnsiConsole.MarkupLine($"[grey]Connecting to {Markup.Escape(connectHost)}:{port}...[/]");

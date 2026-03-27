@@ -74,7 +74,18 @@ public static class SetupCommand
         return false;
     }
 
-    public static async Task<int> RunAsync(IPlatform platform, bool verbose = false)
+    /// <summary>
+    /// Helper: prompt for confirmation, or return true if -y was passed.
+    /// </summary>
+    private static bool autoYes;
+
+    private static bool Confirm(string prompt, bool defaultValue = true)
+    {
+        if (autoYes) return true;
+        return AnsiConsole.Prompt(new ConfirmationPrompt(prompt) { DefaultValue = defaultValue });
+    }
+
+    public static async Task<int> RunAsync(IPlatform platform, bool verbose = false, bool yes = false)
     {
         AnsiConsole.Write(new Rule("[bold blue]SSH Easy Config - Setup Wizard[/]").LeftJustified());
         AnsiConsole.WriteLine();
@@ -86,6 +97,8 @@ public static class SetupCommand
             if (PromptAndRelaunchElevated(verbose))
                 return 0;
         }
+
+        autoYes = yes;
 
         // ── Step 1: Detect state ──────────────────────────────────────────
         AnsiConsole.Write(new Rule("[bold]Step 1: Detecting system state[/]").LeftJustified());
@@ -143,8 +156,7 @@ public static class SetupCommand
             var installCmd = SshServerInstaller.GetInstallCommand(platform.Kind, platform.PackageManager);
             AnsiConsole.MarkupLine($"[dim]Command: {Markup.Escape(installCmd.Command)} {Markup.Escape(installCmd.Arguments)}[/]");
 
-            var installConfirm = AnsiConsole.Prompt(
-                new ConfirmationPrompt("Install SSH server now?") { DefaultValue = true });
+            var installConfirm = Confirm("Install SSH server now?");
 
             if (installConfirm)
             {
@@ -190,8 +202,7 @@ public static class SetupCommand
                 AnsiConsole.Write(new Rule("[bold]Step 3: Start SSH Service[/]").LeftJustified());
                 AnsiConsole.WriteLine();
 
-                var startConfirm = AnsiConsole.Prompt(
-                    new ConfirmationPrompt("SSH service is not running. Start it now?") { DefaultValue = true });
+                var startConfirm = Confirm("SSH service is not running. Start it now?");
 
                 if (startConfirm)
                 {
@@ -226,8 +237,7 @@ public static class SetupCommand
             sshdEnabled = await SshServerInstaller.IsSshdEnabledAsync(platform);
             if (!sshdEnabled)
             {
-                var enableConfirm = AnsiConsole.Prompt(
-                    new ConfirmationPrompt("SSH service is not enabled on boot. Enable it?") { DefaultValue = true });
+                var enableConfirm = Confirm("SSH service is not enabled on boot. Enable it?");
 
                 if (enableConfirm)
                 {
@@ -264,8 +274,7 @@ public static class SetupCommand
             AnsiConsole.Write(new Rule("[bold]Step 4: Firewall Configuration[/]").LeftJustified());
             AnsiConsole.WriteLine();
 
-            var fwConfirm = AnsiConsole.Prompt(
-                new ConfirmationPrompt("Port 22 appears blocked. Open it in the firewall?") { DefaultValue = true });
+            var fwConfirm = Confirm("Port 22 appears blocked. Open it in the firewall?");
 
             if (fwConfirm)
             {
@@ -316,8 +325,7 @@ public static class SetupCommand
             {
                 AnsiConsole.MarkupLine("[yellow]Match block for administrators is missing from sshd_config.[/]");
 
-                var matchConfirm = AnsiConsole.Prompt(
-                    new ConfirmationPrompt("Add Match block and restart sshd?") { DefaultValue = true });
+                var matchConfirm = Confirm("Add Match block and restart sshd?");
 
                 if (matchConfirm)
                 {
@@ -362,8 +370,7 @@ public static class SetupCommand
             AnsiConsole.MarkupLine($"[green]Existing key found:[/] {Markup.Escape(truncated.Trim())}");
             AnsiConsole.WriteLine();
 
-            var useExisting = AnsiConsole.Prompt(
-                new ConfirmationPrompt("Use existing key?") { DefaultValue = true });
+            var useExisting = Confirm("Use existing key?");
 
             if (useExisting)
             {
@@ -442,8 +449,7 @@ public static class SetupCommand
         {
             AnsiConsole.MarkupLine("[yellow]SSH client is not installed.[/]");
 
-            var installClient = AnsiConsole.Prompt(
-                new ConfirmationPrompt("Install SSH client now?") { DefaultValue = true });
+            var installClient = Confirm("Install SSH client now?");
 
             if (installClient)
             {
