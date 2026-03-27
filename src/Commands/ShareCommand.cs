@@ -281,10 +281,39 @@ public static class ShareCommand
 
         if (addToAuthorized)
         {
+            // Standard authorized_keys
             var existing = await AuthorizedKeysManager.ReadAsync(platform);
             var updated = AuthorizedKeysManager.AddKey(existing, remoteBundle.PublicKey);
             await AuthorizedKeysManager.WriteAsync(platform, updated);
             AnsiConsole.MarkupLine("[green]Key added to authorized_keys.[/]");
+
+            // Windows MS-linked admin: also add to administrators_authorized_keys
+            if (OperatingSystem.IsWindows() && platform.Kind == PlatformKind.Windows)
+            {
+                try
+                {
+                    var isMsAccount = WindowsAccountHelper.IsMicrosoftLinkedAccount();
+                    var isAdmin = platform.IsElevated;
+
+                    if (isMsAccount && isAdmin)
+                    {
+                        await WindowsAccountHelper.SetupAdminAuthorizedKeysAsync(platform, remoteBundle.PublicKey);
+                        await WindowsAccountHelper.EnsureMatchBlockAsync(platform);
+                        await platform.RestartSshServiceAsync();
+                        AnsiConsole.MarkupLine("[green]Key also added to administrators_authorized_keys (MS account + admin).[/]");
+                    }
+                    else if (isMsAccount && !isAdmin)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]MS-linked admin account detected but not running elevated.[/]");
+                        AnsiConsole.MarkupLine("[yellow]Run 'ssh-easy-config setup -y' as Administrator to configure administrators_authorized_keys.[/]");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AnsiConsole.MarkupLine($"[yellow]Could not update administrators_authorized_keys: {Markup.Escape(ex.Message)}[/]");
+                    AnsiConsole.MarkupLine("[yellow]Run 'ssh-easy-config config fix' to repair.[/]");
+                }
+            }
         }
 
         var addAlias = AnsiConsole.Prompt(

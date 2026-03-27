@@ -12,10 +12,11 @@ public static class ConfigCommand
 
         if (action is null)
         {
+            var choices = new List<string> { "audit", "harden", "hosts", "fix" };
             action = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("What would you like to do?")
-                    .AddChoices("audit", "harden", "hosts"))
+                    .AddChoices(choices))
                 .ToLowerInvariant();
         }
 
@@ -24,6 +25,7 @@ public static class ConfigCommand
             "audit" => await RunAuditAsync(platform),
             "harden" => await RunHardenAsync(platform),
             "hosts" => await RunHostsAsync(platform),
+            "fix" => await RunFixAsync(platform),
             _ => InvalidAction(action)
         };
     }
@@ -194,6 +196,171 @@ public static class ConfigCommand
         }
 
         AnsiConsole.Write(table);
+        return 0;
+    }
+
+    private static async Task<int> RunFixAsync(IPlatform platform)
+    {
+        AnsiConsole.Write(new Rule("[bold blue]SSH Configuration Fix[/]").LeftJustified());
+        AnsiConsole.WriteLine();
+
+        var fixes = 0;
+
+        // Windows MS-linked account: migrate keys to administrators_authorized_keys
+        if (OperatingSystem.IsWindows() && platform.Kind == PlatformKind.Windows)
+        {
+            var isMsAccount = WindowsAccountHelper.IsMicrosoftLinkedAccount();
+            var isAdmin = platform.IsElevated;
+
+            if (isMsAccount)
+            {
+                AnsiConsole.MarkupLine("[yellow]Microsoft-linked account detected.[/]");
+
+                if (!isAdmin)
+                {
+                    AnsiConsole.MarkupLine("[red]Administrator privileges required for Windows SSH fixes.[/]");
+                    AnsiConsole.MarkupLine("[grey]Re-run: ssh-easy-config config fix (as Administrator)[/]");
+                    return 1;
+                }
+
+                // Check and migrate keys from authorized_keys to administrators_authorized_keys
+                var userKeysPath = Path.Combine(platform.SshDirectoryPath, "authorized_keys");
+                var adminKeysPath = WindowsAccountHelper.GetAdminAuthorizedKeysPath();
+
+                if (File.Exists(userKeysPath))
+                {
+                    var userKeys = await File.ReadAllTextAsync(userKeysPath);
+                    var userKeyLines = userKeys.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                        .Where(l => !string.IsNullOrWhiteSpace(l) && !l.TrimStart().StartsWith('#'))
+                        .ToList();
+
+                    if (userKeyLines.Count > 0)
+                    {
+                        // Read existing admin keys
+                        string adminContent;
+                        if (File.Exists(adminKeysPath))
+                        {
+                            // Grant access first in case ACLs are locked down
+                            try { await platform.RunCommandAsync("icacls", $"\"{adminKeysPath}\" /grant \"BUILTIN\\Administrators:(F)\""); }
+                            catch { }
+                            adminContent = await File.ReadAllTextAsync(adminKeysPath);
+                        }
+                        else
+                        {
+                            adminContent = "";
+                        }
+
+                        var keysAdded = 0;
+                        foreach (var key in userKeyLines)
+                        {
+                            var before = adminContent;
+                            adminContent = AuthorizedKeysManager.AddKey(adminContent, key.Trim());
+                            if (adminContent != before) keysAdded++;
+                        }
+
+                        if (keysAdded > 0)
+                        {
+                            await WindowsAccountHelper.SetupAdminAuthorizedKeysAsync(platform, ""); // ensures file + ACLs
+                            // Rewrite with all merged keys
+                            await platform.RunCommandAsync("icacls", $"\"{adminKeysPath}\" /grant \"BUILTIN\\Administrators:(F)\"");
+                            await File.WriteAllTextAsync(adminKeysPath, adminContent);
+                            await platform.RunCommandAsync("icacls",
+                                $"\"{adminKeysPath}\" /inheritance:r /grant \"SYSTEM:(F)\" /grant \"BUILTIN\\Administrators:(F)\"");
+
+                            AnsiConsole.MarkupLine($"[green]Migrated {keysAdded} key(s) to administrators_authorized_keys.[/]");
+                            fixes++;
+                        }
+                        else
+                        {
+                            AnsiConsole.MarkupLine("[green]All keys already present in administrators_authorized_keys.[/]");
+                        }
+                    }
+                }
+
+                // Ensure Match block in sshd_config
+                if (File.Exists(platform.SshdConfigPath))
+                {
+                    var sshdContent = await File.ReadAllTextAsync(platform.SshdConfigPath);
+                    if (!WindowsAccountHelper.SshdConfigHasMatchBlock(sshdContent))
+                    {
+                        await WindowsAccountHelper.EnsureMatchBlockAsync(platform);
+                        AnsiConsole.MarkupLine("[green]Added Match Group administrators block to sshd_config.[/]");
+                        fixes++;
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine("[green]Match block already present in sshd_config.[/]");
+                    }
+                }
+
+                // Ensure PubkeyAuthentication is enabled
+                if (File.Exists(platform.SshdConfigPath))
+                {
+                    var sshdContent = await File.ReadAllTextAsync(platform.SshdConfigPath);
+                    if (!sshdContent.Contains("PubkeyAuthentication yes", StringComparison.OrdinalIgnoreCase))
+                    {
+                        sshdContent = SshdConfigManager.SetDirective(sshdContent, "PubkeyAuthentication", "yes");
+                        await SshdConfigManager.WriteAsync(platform, sshdContent);
+                        AnsiConsole.MarkupLine("[green]Enabled PubkeyAuthentication in sshd_config.[/]");
+                        fixes++;
+                    }
+                }
+
+                if (fixes > 0)
+                {
+                    AnsiConsole.MarkupLine("[grey]Restarting SSH service...[/]");
+                    try
+                    {
+                        await platform.RestartSshServiceAsync();
+                        AnsiConsole.MarkupLine("[green]SSH service restarted.[/]");
+                    }
+                    catch (Exception ex)
+                    {
+                        AnsiConsole.MarkupLine($"[yellow]Could not restart SSH service: {Markup.Escape(ex.Message)}[/]");
+                    }
+                }
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[green]Local account (not MS-linked) — no Windows-specific fixes needed.[/]");
+            }
+        }
+
+        // Cross-platform: check and fix file permissions
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("[bold]Checking file permissions...[/]");
+
+        var sshDir = platform.SshDirectoryPath;
+        if (Directory.Exists(sshDir))
+        {
+            var dirOk = await platform.CheckFilePermissionsAsync(sshDir, SshFileKind.SshDirectory);
+            if (!dirOk)
+            {
+                await platform.SetFilePermissionsAsync(sshDir, SshFileKind.SshDirectory);
+                AnsiConsole.MarkupLine("[green]Fixed .ssh directory permissions.[/]");
+                fixes++;
+            }
+
+            foreach (var keyFile in new[] { "id_ed25519", "id_rsa", "id_ecdsa" })
+            {
+                var keyPath = Path.Combine(sshDir, keyFile);
+                if (!File.Exists(keyPath)) continue;
+                var keyOk = await platform.CheckFilePermissionsAsync(keyPath, SshFileKind.PrivateKey);
+                if (!keyOk)
+                {
+                    await platform.SetFilePermissionsAsync(keyPath, SshFileKind.PrivateKey);
+                    AnsiConsole.MarkupLine($"[green]Fixed {keyFile} permissions.[/]");
+                    fixes++;
+                }
+            }
+        }
+
+        AnsiConsole.WriteLine();
+        if (fixes > 0)
+            AnsiConsole.MarkupLine($"[green]Applied {fixes} fix(es).[/]");
+        else
+            AnsiConsole.MarkupLine("[green]No fixes needed — everything looks good.[/]");
+
         return 0;
     }
 
