@@ -433,31 +433,56 @@ public static class SetupCommand
         AnsiConsole.MarkupLine("[green]Permissions verified and fixed.[/]");
         AnsiConsole.WriteLine();
 
-        // ── Step 8: Validate ──────────────────────────────────────────────
-        AnsiConsole.Write(new Rule("[bold]Step 8: Validation[/]").LeftJustified());
+        // ── Step 8: Ensure SSH client is installed ─────────────────────────
+        AnsiConsole.Write(new Rule("[bold]Step 8: SSH Client[/]").LeftJustified());
         AnsiConsole.WriteLine();
 
-        try
+        var sshPath = SshServerInstaller.FindSshClientPath(platform);
+        if (sshPath is null)
         {
-            // Find ssh client — may not be on PATH on Windows
-            var sshPath = "ssh";
-            if (platform.Kind == PlatformKind.Windows)
+            AnsiConsole.MarkupLine("[yellow]SSH client is not installed.[/]");
+
+            var installClient = AnsiConsole.Prompt(
+                new ConfirmationPrompt("Install SSH client now?") { DefaultValue = true });
+
+            if (installClient)
             {
-                var systemSsh = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.System),
-                    "OpenSSH", "ssh.exe");
-                if (File.Exists(systemSsh))
-                    sshPath = systemSsh;
-                else
+                try
                 {
-                    var progSsh = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                        "OpenSSH", "ssh.exe");
-                    if (File.Exists(progSsh))
-                        sshPath = progSsh;
+                    await AnsiConsole.Status()
+                        .Spinner(Spinner.Known.Dots)
+                        .StartAsync("Installing SSH client...", async _ =>
+                        {
+                            await SshServerInstaller.InstallClientAsync(platform);
+                        });
+                    AnsiConsole.MarkupLine("[green]SSH client installed.[/]");
+                    sshPath = SshServerInstaller.FindSshClientPath(platform);
+                }
+                catch (Exception ex) when (NeedsElevation(ex))
+                {
+                    AnsiConsole.MarkupLine("[red]Installation failed — elevation required.[/]");
+                    if (PromptAndRelaunchElevated(verbose))
+                        return 0;
+                }
+                catch (Exception ex)
+                {
+                    AnsiConsole.MarkupLine($"[red]Failed to install SSH client: {Markup.Escape(ex.Message)}[/]");
                 }
             }
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"[green]SSH client found:[/] [dim]{Markup.Escape(sshPath)}[/]");
+        }
 
+        AnsiConsole.WriteLine();
+
+        // ── Step 9: Validate ──────────────────────────────────────────────
+        AnsiConsole.Write(new Rule("[bold]Step 9: Validation[/]").LeftJustified());
+        AnsiConsole.WriteLine();
+
+        if (sshPath is not null)
+        {
             await AnsiConsole.Status()
                 .Spinner(Spinner.Known.Dots)
                 .StartAsync("Testing SSH connection to localhost...", async _ =>
@@ -477,10 +502,9 @@ public static class SetupCommand
                     }
                 });
         }
-        catch (Exception)
+        else
         {
-            AnsiConsole.MarkupLine("[yellow]SSH client not found — skipping validation.[/]");
-            AnsiConsole.MarkupLine("[dim]Install OpenSSH Client to enable connection testing.[/]");
+            AnsiConsole.MarkupLine("[yellow]SSH client not available — skipping validation.[/]");
         }
 
         AnsiConsole.WriteLine();

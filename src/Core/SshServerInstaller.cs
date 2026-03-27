@@ -136,6 +136,72 @@ public static class SshServerInstaller
         }
     }
 
+    // ── SSH Client ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Finds the ssh client binary path, or null if not installed.
+    /// </summary>
+    public static string? FindSshClientPath(IPlatform platform)
+    {
+        if (platform.Kind == PlatformKind.Windows)
+        {
+            var system32Ssh = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.System),
+                "OpenSSH", "ssh.exe");
+            if (File.Exists(system32Ssh)) return system32Ssh;
+
+            var progSsh = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "OpenSSH", "ssh.exe");
+            if (File.Exists(progSsh)) return progSsh;
+
+            // Check PATH
+            var (ec, stdout, _) = platform.TryRunCommandAsync("where", "ssh").GetAwaiter().GetResult();
+            if (ec == 0 && !string.IsNullOrWhiteSpace(stdout))
+                return stdout.Trim().Split('\n')[0].Trim();
+
+            return null;
+        }
+
+        // Linux/macOS: check which
+        var result = platform.TryRunCommandAsync("which", "ssh").GetAwaiter().GetResult();
+        return result.ExitCode == 0 && !string.IsNullOrWhiteSpace(result.StdOut)
+            ? result.StdOut.Trim()
+            : null;
+    }
+
+    /// <summary>
+    /// Returns the command to install the SSH client.
+    /// </summary>
+    public static (string Command, string Arguments) GetClientInstallCommand(PlatformKind kind, PackageManager pm)
+    {
+        return kind switch
+        {
+            PlatformKind.Windows => ("powershell",
+                "-Command \"Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0\""),
+            PlatformKind.Linux or PlatformKind.Wsl => pm switch
+            {
+                PackageManager.Apt => ("sudo", "apt install -y openssh-client"),
+                PackageManager.Dnf => ("sudo", "dnf install -y openssh-clients"),
+                PackageManager.Yum => ("sudo", "yum install -y openssh-clients"),
+                _ => throw new InvalidOperationException($"Unsupported package manager: {pm}")
+            },
+            PlatformKind.MacOS => ("echo", "SSH client is built-in on macOS"),
+            _ => throw new InvalidOperationException($"Unsupported platform: {kind}")
+        };
+    }
+
+    /// <summary>
+    /// Installs the SSH client.
+    /// </summary>
+    public static async Task InstallClientAsync(IPlatform platform)
+    {
+        var (cmd, args) = GetClientInstallCommand(platform.Kind, platform.PackageManager);
+        await platform.RunCommandAsync(cmd, args);
+    }
+
+    // ── Private helpers ─────────────────────────────────────────────────
+
     private static async Task<bool> CheckWindowsSshdInstalledAsync(IPlatform platform)
     {
         var result = await platform.TryRunCommandAsync("powershell",
