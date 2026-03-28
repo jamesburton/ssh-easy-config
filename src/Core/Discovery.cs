@@ -25,8 +25,12 @@ public static class Discovery
         var sd = new ServiceDiscovery(mdns);
         var serviceProfile = new Makaretu.Dns.ServiceProfile(
             profile.InstanceName, ServiceName, (ushort)profile.Port);
-        // Override default HostName (derived from instance name) with actual hostname
-        serviceProfile.HostName = new DomainName(profile.HostName);
+        // Override default HostName (derived from instance name) with actual hostname.
+        // Must update both the property AND the SRV record (set in constructor).
+        var hostDomain = new DomainName(profile.HostName);
+        serviceProfile.HostName = hostDomain;
+        foreach (var srv in serviceProfile.Resources.OfType<SRVRecord>())
+            srv.Target = hostDomain;
         sd.Advertise(serviceProfile);
         mdns.Start();
         return new AdvertisementHandle(mdns, sd);
