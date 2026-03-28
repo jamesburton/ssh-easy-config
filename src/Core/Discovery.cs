@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Makaretu.Dns;
 
 namespace SshEasyConfig.Core;
@@ -24,6 +25,8 @@ public static class Discovery
         var sd = new ServiceDiscovery(mdns);
         var serviceProfile = new Makaretu.Dns.ServiceProfile(
             profile.InstanceName, ServiceName, (ushort)profile.Port);
+        // Override default HostName (derived from instance name) with actual hostname
+        serviceProfile.HostName = new DomainName(profile.HostName);
         sd.Advertise(serviceProfile);
         mdns.Start();
         return new AdvertisementHandle(mdns, sd);
@@ -61,7 +64,9 @@ public static class Discovery
             }
 
             if (hostName is not null && port > 0)
-                results.Add(new ServiceProfile(hostName, port, args.ServiceInstanceName.ToString(), addresses));
+                results.Add(new ServiceProfile(
+                    UnescapeDnsName(hostName), port,
+                    UnescapeDnsName(args.ServiceInstanceName.ToString()), addresses));
         };
 
         mdns.Start();
@@ -193,6 +198,12 @@ public static class Discovery
             return null;
         }
     }
+
+    /// <summary>
+    /// Decodes DNS escape sequences like \032 (space) back to their character equivalents.
+    /// </summary>
+    private static string UnescapeDnsName(string name) =>
+        Regex.Replace(name, @"\\(\d{3})", m => ((char)int.Parse(m.Groups[1].Value)).ToString());
 
     private sealed class AdvertisementHandle(MulticastService mdns, ServiceDiscovery sd) : IDisposable
     {
